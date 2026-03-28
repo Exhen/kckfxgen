@@ -132,6 +132,11 @@ class BookMetadata(object):
             if new_cover_image_data != self.get_cover_image_data():
                 cover_image = self.set_cover_image_data(new_cover_image_data)
 
+        # $490.cover_image 与 $258.$424 一致；未调用 set_cover_image_data 时仍用已有 cover 资源写 $424。
+        cover_res_id = cover_image if cover_image is not None else None
+        if cover_res_id is None and yj_metadata.cover_image_data is not None:
+            cover_res_id = self.get_metadata_value("cover_image")
+
         if book_metadata_fragment is not None:
             for cm in book_metadata_fragment.value.get("$491", {}):
                 if cm.get("$495", "") == "kindle_title_metadata":
@@ -196,8 +201,7 @@ class BookMetadata(object):
             mdx = metadata_fragment.value
 
             if not (len(mdx) == 0 or (len(mdx) == 1 and "$169" in mdx)):
-                # 仅在有显式新值时写入；勿在 yj_metadata 字段为 None 时 pop，否则会抹掉 KPF/KDF 已带的
-                # $258（metadata）书名、作者、封面等（如 kckfxgen 经 kpf_path_to_kfx 补 ASIN / PDOC）。
+                # 仅写 yj_metadata 中非 None 字段；勿 pop，以免抹掉 KDF 已有 $258。
                 if authors:
                     mdx[IS("$222")] = " & ".join(authors)
 
@@ -210,8 +214,8 @@ class BookMetadata(object):
                 if yj_metadata.asin is not None:
                     mdx[IS("$224")] = yj_metadata.asin
 
-                if cover_image is not None:
-                    mdx[IS("$424")] = IS(cover_image)
+                if cover_res_id is not None:
+                    mdx[IS("$424")] = IS(str(cover_res_id))
 
                 if yj_metadata.description is not None:
                     mdx[IS("$154")] = yj_metadata.description
@@ -498,27 +502,8 @@ class BookMetadata(object):
         return ("jpeg" if cover_fmt == "jpg" else cover_fmt, cover_raw_media.value.tobytes())
 
     def fix_cover_image_data(self, cover_image_data):
-        fmt = cover_image_data[0]
-        data = orig_data = cover_image_data[1]
-
-        if fmt.lower() in ["jpg", "jpeg"] and not data.startswith(b"\xff\xd8\xff\xe0"):
-            try:
-                with disable_debug_log():
-                    cover = Image.open(io.BytesIO(data))
-                    outfile = io.BytesIO()
-                    cover.save(outfile, "jpeg", quality=90)
-                    cover.close()
-
-                data = outfile.getvalue()
-            except Exception:
-                data = orig_data
-
-            if data.startswith(b"\xff\xd8\xff\xe0"):
-                log.info("Changed cover image from %s to JPEG/JFIF for Kindle lockscreen" % jpeg_type(orig_data))
-            else:
-                log.error("Failed to change cover image from %s to JPEG/JFIF" % jpeg_type(orig_data))
-                data = orig_data
-
+        """原样返回封面字节，不经 Pillow 重编码（含 JFIF 规范化）。"""
+        fmt, data = cover_image_data[0], cover_image_data[1]
         return (fmt, data)
 
     def set_cover_image_data(self, cover_image_data, update_cover_section=True):
@@ -526,8 +511,10 @@ class BookMetadata(object):
         if fmt == "jpeg":
             fmt = "jpg"
 
-        if fmt != "jpg":
-            raise Exception("Cannot set KFX cover image format to %s, must be JPEG" % fmt.upper())
+        if fmt not in ("jpg", "png"):
+            raise Exception(
+                "Cannot set KFX cover image format to %s, must be JPEG or PNG" % fmt.upper()
+            )
 
         cover_image = self.get_metadata_value("cover_image")
         if cover_image is None:
@@ -541,13 +528,26 @@ class BookMetadata(object):
 
         if "$214" in cover_resource:
             with disable_debug_log():
+                try:
+                    resample = Image.Resampling.LANCZOS
+                except AttributeError:
+                    resample = Image.LANCZOS
                 cover_thumbnail = Image.open(io.BytesIO(data))
-                cover_thumbnail.thumbnail((512, 512), Image.ANTIALIAS)
-                outfile = io.BytesIO()
-                cover_thumbnail.save(outfile, "jpeg" if fmt == "jpg" else fmt, quality=90)
-                cover_thumbnail.close()
-
-            thumbnail_data = outfile.getvalue()
+                tw, th = cover_thumbnail.size
+                if tw <= 512 and th <= 512:
+                    cover_thumbnail.close()
+                    thumbnail_data = data
+                else:
+                    cover_thumbnail.thumbnail((512, 512), resample)
+                    outfile = io.BytesIO()
+                    if fmt == "jpg":
+                        cover_thumbnail.save(
+                            outfile, "JPEG", quality=95, optimize=False
+                        )
+                    else:
+                        cover_thumbnail.save(outfile, "PNG")
+                    cover_thumbnail.close()
+                    thumbnail_data = outfile.getvalue()
 
             thumbnail_resource = unannotated(cover_resource["$214"])
             self.update_image_resource_and_media(str(thumbnail_resource), thumbnail_data, fmt)

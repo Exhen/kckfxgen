@@ -68,6 +68,41 @@ class _KfxLibLogAdapter:
         self._l.exception("%s", msg)
 
 
+def _normalize_kindle_title_cover_image_str(book: object) -> None:
+    """把 kindle_title 里 cover_image 的 $307 写成内置 str（kfx_id 解析后常为 IonSymbol，设备表现不一致）。"""
+    from kckfxgen.kfxlib.ion import IS, IonStruct
+
+    f490 = book.fragments.get("$490")
+    if f490 is None:
+        return
+    for cm in f490.value.get("$491", []):
+        if str(cm.get("$495", "")) != "kindle_title_metadata":
+            continue
+        new_rows = []
+        for kv in cm.get("$258", []):
+            key = kv.get("$492", "")
+            val = kv.get("$307", "")
+            if key == "cover_image":
+                new_rows.append(
+                    IonStruct(IS("$492"), "cover_image", IS("$307"), str(val))
+                )
+            else:
+                new_rows.append(kv)
+        cm[IS("$258")] = new_rows
+        break
+
+
+def _pdoc_strip_fragment_258_cover_asin(book: object) -> None:
+    """PDOC：删除顶层 $258 的 $424/$224；勿清空整段 $258（会破坏与 document_data 的阅读顺序一致性）。"""
+    f258 = book.fragments.get("$258")
+    if f258 is None:
+        return
+    v = f258.value
+    for k in list(v.keys()):
+        if str(k) in ("$424", "$224"):
+            del v[k]
+
+
 def kpf_path_to_kfx_bytes(kpf_path: Path, *, cde_pdoc: bool = True) -> bytes:
     """
     读取 ``.kpf`` 路径，返回单文件 KFX 二进制（CONT）。
@@ -76,23 +111,40 @@ def kpf_path_to_kfx_bytes(kpf_path: Path, *, cde_pdoc: bool = True) -> bytes:
     """
     _ensure_calibre_config_stub()
     from kckfxgen.kfxlib import YJ_Book, YJ_Metadata, set_logger
+    from kckfxgen.kfxlib.utilities import (
+        begin_parallel_kfx_convert,
+        end_parallel_kfx_convert,
+    )
 
     kpf_path = kpf_path.expanduser().resolve()
     if not kpf_path.is_file():
         raise FileNotFoundError(kpf_path)
 
-    lib_log = _KfxLibLogAdapter(logging.getLogger("kfxlib"))
-    set_logger(lib_log)
+    begin_parallel_kfx_convert()
     try:
-        md = YJ_Metadata(replace_existing_authors_with_sort=True)
-        md.asin = True
-        md.cde_content_type = "PDOC" if cde_pdoc else "EBOK"
+        lib_log = _KfxLibLogAdapter(logging.getLogger("kfxlib"))
+        set_logger(lib_log)
+        try:
+            md = YJ_Metadata(replace_existing_authors_with_sort=True)
+            md.asin = True
+            md.cde_content_type = "PDOC" if cde_pdoc else "EBOK"
 
-        book = YJ_Book(str(kpf_path))
-        book.decode_book(set_metadata=md, set_approximate_pages=-1)
-        return book.convert_to_single_kfx()
+            book = YJ_Book(str(kpf_path))
+            book.decode_book(set_metadata=md, set_approximate_pages=-1)
+            # 封面保持 kindle_title 指向的正文 $164，勿改绑 kfx_cover_image；始终 set_cover_image_data 以补 $162（image/jpg 或 image/png）。
+            cov = book.get_cover_image_data()
+            if cov is not None:
+                fixed = book.fix_cover_image_data(cov)
+                book.set_cover_image_data(fixed)
+                book.set_yj_metadata_to_book(book.get_yj_metadata_from_book())
+            if cde_pdoc:
+                _pdoc_strip_fragment_258_cover_asin(book)
+            _normalize_kindle_title_cover_image_str(book)
+            return book.convert_to_single_kfx()
+        finally:
+            set_logger(None)
     finally:
-        set_logger(None)
+        end_parallel_kfx_convert()
 
 
 def kpf_path_to_kfx_file(

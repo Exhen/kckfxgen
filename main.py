@@ -155,7 +155,7 @@ def main() -> None:
         "-j",
         "--jobs",
         type=int,
-        default=max(1, min(8, os.cpu_count() or 4)),
+        default=max(1, min(2, os.cpu_count() or 4)),
         metavar="N",
         help="并发线程数（默认: min(8, CPU 核心数)）",
     )

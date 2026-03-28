@@ -20,9 +20,6 @@ from amazon.ion.symbols import SymbolTableCatalog, shared_symbol_table
 from PIL import Image
 
 from .epub_collect import EPUBMetadata
-
-# JPEG 编码：关闭 optimize 可略减 CPU（文件略大）
-_JPEG_SAVE_KW = {"format": "JPEG", "quality": 92, "optimize": False}
 from .yj_symbols import YJ_CONVERSION_SYMBOLS, YJ_SYMBOLS
 
 logger = logging.getLogger(__name__)
@@ -102,12 +99,66 @@ def _first_portrait_cover_index(
     return 0
 
 
-def _transpose_rotate_90_ccw(rgb: Image.Image) -> Image.Image:
+def _sniff_jpeg_png_format(raw: bytes, suffix: str) -> str | None:
+    """按魔数识别 JPEG / PNG；魔数不明时仅信任 .jpg/.jpeg/.png 后缀。"""
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if len(raw) >= 3 and raw[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    s = suffix.lower()
+    if s in (".jpg", ".jpeg"):
+        return "jpg"
+    if s == ".png":
+        return "png"
+    return None
+
+
+def _read_raster_passthrough(path: Path) -> tuple[bytes, str, int, int]:
+    """读取栅格原文件字节（不重编码），并解析宽高（仅解码元数据/必要扫描）。"""
+    raw = path.read_bytes()
+    fmt = _sniff_jpeg_png_format(raw, path.suffix)
+    if fmt is None:
+        raise ValueError(
+            f"内页仅支持原样嵌入 JPEG/PNG，且须与文件内容一致: {path}"
+        )
+    with Image.open(io.BytesIO(raw)) as im:
+        w, h = im.size
+    return raw, fmt, w, h
+
+
+def _transpose_rotate_90_ccw(im: Image.Image) -> Image.Image:
     """逆时针 90°（宽图变竖图）；兼容 Pillow 9+ Transpose 与旧常量。"""
     trans = getattr(Image, "Transpose", None)
     if trans is not None:
-        return rgb.transpose(trans.ROTATE_90)
-    return rgb.transpose(Image.ROTATE_90)  # type: ignore[attr-defined]
+        return im.transpose(trans.ROTATE_90)
+    return im.transpose(Image.ROTATE_90)  # type: ignore[attr-defined]
+
+
+def _rgb_for_jpeg(im: Image.Image) -> Image.Image:
+    """转为 RGB，供 JPEG 保存（RGBA 白底；其它模式 convert）。"""
+    if im.mode == "RGBA":
+        bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+        bg.paste(im, mask=im.split()[3])
+        return bg.convert("RGB")
+    if im.mode != "RGB":
+        return im.convert("RGB")
+    return im
+
+
+def _encode_rotated_raster(raw: bytes, ion_fmt: str) -> tuple[bytes, int, int]:
+    """解码后逆时针 90°，再按 ion_fmt（jpg/png）编码（旋转无法避免重编码）。"""
+    with Image.open(io.BytesIO(raw)) as im:
+        im.load()
+        rotated = _transpose_rotate_90_ccw(im).copy()
+    w, h = rotated.size
+    buf = io.BytesIO()
+    if ion_fmt == "jpg":
+        _rgb_for_jpeg(rotated).save(
+            buf, format="JPEG", quality=95, optimize=False
+        )
+    else:
+        rotated.save(buf, format="PNG", compress_level=3)
+    return buf.getvalue(), w, h
 
 
 class ImageKdfWriter:
@@ -305,7 +356,7 @@ class ImageKdfWriter:
             },
         ]
         if cover_res_id:
-            # value 须为 kfx_id 注解（$598），与 external_resource 的 fid 符号一致；纯字符串无法通过 get_cover_image_data 解析
+            # kfx_id 与页资源 fid 一致；单文件 KFX 导出时 kpf_to_kfx 会把该值规范为 str。
             metadata.append(
                 {
                     "key": "cover_image",
@@ -373,17 +424,6 @@ class ImageKdfWriter:
             "content_features", "element_type", "content_features"
         )
 
-    @staticmethod
-    def _rgb_for_jpeg(im: Image.Image) -> Image.Image:
-        """转为 RGB，供 JPEG 保存（RGBA 白底；其它模式 convert）。"""
-        if im.mode == "RGBA":
-            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
-            bg.paste(im, mask=im.split()[3])
-            return bg.convert("RGB")
-        if im.mode != "RGB":
-            return im.convert("RGB")
-        return im
-
     def _insert_section_auxiliary_data(self, section_id: str) -> None:
         ad_id = section_id + "-ad"
         ion_text = f"""{{
@@ -405,18 +445,15 @@ class ImageKdfWriter:
         rotate_landscape_90: bool = False,
     ) -> tuple[str, list[tuple[str, int]], str]:
         assert self.res_dir is not None
-        # 单张图只 open 一次；JPEG 直接写入 res/，避免 EPUB 临时目录中的副本 + shutil.copy
-        # 须在 with 内 .copy()：若已是 RGB，_rgb_for_jpeg 会原样返回 im，退出 with 后图像已关闭，save 会报 fp/seek 错误。
-        with Image.open(image_path) as im:
-            im.load()
-            im_width, im_height = im.size
-            rgb = self._rgb_for_jpeg(im).copy()
-
+        image_bytes, ion_fmt, im_width, im_height = _read_raster_passthrough(
+            image_path
+        )
         if rotate_landscape_90 and im_width > im_height:
-            rgb = _transpose_rotate_90_ccw(rgb)
-            im_width, im_height = rgb.size
+            image_bytes, im_width, im_height = _encode_rotated_raster(
+                image_bytes, ion_fmt
+            )
             logger.debug(
-                "[kdf] 横幅旋转 90°: %s -> %dx%d",
+                "[kdf] 横幅旋转 90°（逆时针）: %s -> %dx%d",
                 image_path.name,
                 im_width,
                 im_height,
@@ -460,14 +497,11 @@ class ImageKdfWriter:
 
         res_id = self.create_fragment_id("e")
         res_loc_id = self.create_fragment_id("rsrc")
-        buf = io.BytesIO()
-        rgb.save(buf, **_JPEG_SAVE_KW)
-        jpeg_bytes = buf.getvalue()
         dest = self.res_dir / res_loc_id
-        dest.write_bytes(jpeg_bytes)
+        dest.write_bytes(image_bytes)
         # location 须为普通路径名（非 kfx_id）：kpf_fix_fragment 要求 IonString，并 fix 为 resource/<id> 与 $417 片段 fid 对齐
         res_text = f"""{{
- format: jpg,
+ format: {ion_fmt},
  location: "{res_loc_id}",
  resource_width: {im_width},
  resource_name: kfx_id::"{res_id}",
@@ -481,8 +515,8 @@ class ImageKdfWriter:
                 (res_loc_id, "element_type", "bcRawMedia"),
             ]
         )
-        # 须用 blob 嵌入 JPEG：KPF 常仅含 book.kdf，无 zip 内 res/* 文件时 path 行无法加载，不会生成 $417，封面/内页图均丢失
-        self._insert_fragment(res_loc_id, "blob", jpeg_bytes)
+        # 须用 blob 嵌入媒体：KPF 常仅含 book.kdf，无 zip 内 res/* 文件时 path 行无法加载，不会生成 $417，封面/内页图均丢失
+        self._insert_fragment(res_loc_id, "blob", image_bytes)
 
         style_id = self.create_fragment_id("s")
         style_text = f"""{{
@@ -543,8 +577,7 @@ class ImageKdfWriter:
         self._insert_fragment_property(
             "document_data", "element_type", "document_data"
         )
-        # 顶层 metadata（$258）：kfxlib get_metadata_value 在 $490 未命中时会读此处；
-        # 仅写 $490/kindle_title_metadata 时，部分客户端不显示书名/作者/封面。
+        # 顶层 $258：与 document_data 同阅读顺序，并供 get_metadata_value 回退。
         reading_orders_block = f"""reading_orders: [
  {{
  reading_order_name: default,

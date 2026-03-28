@@ -18,6 +18,7 @@ import shutil
 import string
 import struct
 import sys
+import threading
 import time
 import uuid
 import zipfile
@@ -221,6 +222,11 @@ tempdir_ = None
 atexit_set_ = False
 ALPHA_NUMERIC = string.ascii_lowercase + string.digits
 
+# KPF→KFX 并行时，各线程共用 ``tempdir()``；须避免任一线程在 ``final_actions`` 里
+# ``temp_file_cleanup()`` 删掉他人仍在使用的临时文件（会导致缺 $258 等片段的误报）。
+_kfx_convert_inflight = 0
+_kfx_parallel_lock = threading.Lock()
+
 
 try:
     from calibre.ptempfile import PersistentTemporaryDirectory
@@ -250,8 +256,30 @@ def tempdir():
     return tempdir_
 
 
+def begin_parallel_kfx_convert():
+    """与 ``end_parallel_kfx_convert`` 成对使用；包住整段 KPF→KFX 转换。"""
+    global _kfx_convert_inflight
+    with _kfx_parallel_lock:
+        _kfx_convert_inflight += 1
+
+
+def end_parallel_kfx_convert():
+    """最后一项在飞转换结束时再执行临时目录清理（与 ``flush_unicode_cache``）。"""
+    global _kfx_convert_inflight
+    with _kfx_parallel_lock:
+        _kfx_convert_inflight -= 1
+        last = _kfx_convert_inflight == 0
+    if last:
+        flush_unicode_cache()
+        temp_file_cleanup()
+
+
 def temp_file_cleanup():
     global tempdir_
+
+    with _kfx_parallel_lock:
+        if _kfx_convert_inflight > 0:
+            return
 
     if tempdir_ is not None and not calibre_temp:
         tries = 0
@@ -957,8 +985,14 @@ UNICODE_PYTHON_NARROW_BUILD = (sys.maxunicode < 0x10ffff)
 if UNICODE_PYTHON_NARROW_BUILD and ENABLE_WIDE_UNICODE_HANDLING:
     unicode_cache = {}
 
-    def flush_unicode_cache():
+    def _flush_unicode_cache_impl():
         unicode_cache.clear()
+
+    def flush_unicode_cache():
+        with _kfx_parallel_lock:
+            if _kfx_convert_inflight > 0:
+                return
+        _flush_unicode_cache_impl()
 
     def cache_unicode(s):
         lst = []
@@ -1004,8 +1038,14 @@ if UNICODE_PYTHON_NARROW_BUILD and ENABLE_WIDE_UNICODE_HANDLING:
         return "".join(lst[start:stop])
 
 else:
-    def flush_unicode_cache():
+    def _flush_unicode_cache_impl():
         pass
+
+    def flush_unicode_cache():
+        with _kfx_parallel_lock:
+            if _kfx_convert_inflight > 0:
+                return
+        _flush_unicode_cache_impl()
 
     unicode_len = len
 

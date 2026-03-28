@@ -54,21 +54,6 @@ def _safe_kpf_name_stem(stem: str, *, max_len: int = 100) -> str:
     return s[:max_len]
 
 
-def _unique_filename_in_dir(directory: Path, filename: str) -> Path:
-    """若 ``directory/filename`` 已存在，则依次尝试 ``stem_2.ext``、``stem_3``…"""
-    directory = directory.resolve()
-    p = directory / filename
-    if not p.exists():
-        return p
-    stem = Path(filename).stem
-    suffix = Path(filename).suffix
-    for n in range(2, 10_000):
-        cand = directory / f"{stem}_{n}{suffix}"
-        if not cand.exists():
-            return cand
-    raise OSError(f"无法为 {filename!r} 在目录内分配唯一文件名: {directory}")
-
-
 def _kfx_basename_title_author(
     input_path: Path,
     *,
@@ -379,7 +364,7 @@ def convert_to_kfx(
         book_author=book_author,
         book_publisher=book_publisher,
     )
-    out_kfx = _unique_filename_in_dir(out_dir, kfx_name)
+    out_kfx = out_dir / kfx_name
     try:
         if not _cli_verbose():
             logger.info("处理「%s」…", input_path.stem)
