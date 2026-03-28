@@ -1,0 +1,32 @@
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local outputs (可选：若需提交样例请自行从 .gitignore 中删除对应行)
+*.kpf
+*.kfx
+
+# Logs / temp
+*.log
+*.tmp
+~$*
