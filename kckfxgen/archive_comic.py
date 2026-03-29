@@ -20,14 +20,15 @@ def is_comic_archive_path(path: Path) -> bool:
     return path.suffix.lower() in COMIC_ARCHIVE_SUFFIXES
 
 
-def _natural_key(s: str) -> list[str | int]:
-    out: list[str | int] = []
+def _natural_key(s: str) -> tuple[tuple[int, str | int], ...]:
+    """自然排序键：数字按数值比较，且永不与文本在同一比较位置上混用类型（避免 str/int 比较）。"""
+    out: list[tuple[int, str | int]] = []
     for part in re.split(r"(\d+)", s):
         if part.isdigit():
-            out.append(int(part))
+            out.append((0, int(part)))
         elif part:
-            out.append(part.lower())
-    return out
+            out.append((1, part.lower()))
+    return tuple(out)
 
 
 def _skip_path_parts(rel: Path) -> bool:

@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""kckfxgen 图形界面：将 EPUB / 漫画包 / 目录转为 KFX（tkinter，无额外依赖）。"""
+"""kckfxgen 图形界面：EPUB / 漫画包 → KFX。
+
+使用 tkinter **ttk + 系统原生主题**（macOS Aqua、Windows vista/xpnative），
+控件外观与系统设置一致。仅依赖标准库。
+"""
 
 from __future__ import annotations
 
+import os
 import sys
+
+if sys.platform == "darwin":
+    os.environ.setdefault("TK_SILENCE_DEPRECATION", "1")
+
 from pathlib import Path
 
 
 def _resolve_bundle_root() -> Path:
-    """源码运行：仓库根目录。PyInstaller 冻结：必须使用 ``_MEIPASS``（内含 ``main.py``、``kckfxgen``）。"""
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
@@ -30,12 +38,13 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import logging
-import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import ttk
 from typing import Any, Literal
 
 from kckfxgen.cli_log import configure_logging
@@ -43,9 +52,59 @@ from kckfxgen.cli_log import configure_logging
 import main as kck_main
 
 
-class _GuiLogHandler(logging.Handler):
-    """将日志行写入队列，由主线程刷到文本框。"""
+def _use_native_ttk_theme(root: tk.Tk) -> tkfont.Font:
+    """选用系统原生 ttk 主题，不覆盖颜色/按钮样式。返回用于日志的系统等宽字体。"""
+    style = ttk.Style(root)
+    if sys.platform == "darwin":
+        order = ("aqua", "clam", "default")
+    elif sys.platform == "win32":
+        order = ("vista", "xpnative", "windows", "clam", "default")
+    else:
+        order = ("clam", "default")
+    for name in order:
+        try:
+            style.theme_use(name)
+            break
+        except tk.TclError:
+            continue
+    try:
+        return tkfont.nametofont("TkFixedFont")
+    except Exception:
+        return tkfont.Font(root=root, family="Courier", size=10)
 
+
+def _present_main_window(root: tk.Tk) -> None:
+    try:
+        root.update_idletasks()
+        root.deiconify()
+        root.lift()
+        root.attributes("-topmost", True)
+
+        def _unset_topmost() -> None:
+            try:
+                root.attributes("-topmost", False)
+            except tk.TclError:
+                pass
+
+        root.after_idle(_unset_topmost)
+    except tk.TclError:
+        pass
+    if sys.platform == "darwin":
+
+        def _mac_reopen() -> None:
+            try:
+                root.deiconify()
+                root.lift()
+            except tk.TclError:
+                pass
+
+        try:
+            root.createcommand("tk::mac::ReopenApplication", _mac_reopen)
+        except tk.TclError:
+            pass
+
+
+class _GuiLogHandler(logging.Handler):
     def __init__(self, q: queue.Queue[str]) -> None:
         super().__init__()
         self._q = q
@@ -180,8 +239,12 @@ def _run_conversion(
 class KckfxgenGui:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("kckfxgen — Kindle 漫画 KFX")
-        self.root.minsize(720, 560)
+        self.root.title("kckfxgen — Kindle 漫画 / EPUB → KFX")
+        self.root.minsize(740, 640)
+        self.root.geometry("980x740")
+
+        self._log_font = _use_native_ttk_theme(self.root)
+
         self._log_queue: queue.Queue[str] = queue.Queue()
         self._busy = False
         self._poll_scheduled = False
@@ -202,135 +265,174 @@ class KckfxgenGui:
         self.var_jobs = tk.StringVar(value=str(max(1, min(8, os.cpu_count() or 4))))
 
         self._build()
+        _present_main_window(self.root)
 
     def _build(self) -> None:
-        pad = {"padx": 6, "pady": 4}
-        root_f = ttk.Frame(self.root, padding=8)
-        root_f.pack(fill=tk.BOTH, expand=True)
+        root = self.root
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
 
-        # 输入
-        ttk.Label(root_f, text="输入（EPUB / ZIP / CBZ / RAR / CBR 或含上述文件的文件夹）").grid(
-            row=0, column=0, columnspan=3, sticky="w", **pad
-        )
-        ttk.Entry(root_f, textvariable=self.var_input, width=64).grid(
-            row=1, column=0, columnspan=2, sticky="ew", **pad
-        )
-        bf = ttk.Frame(root_f)
-        bf.grid(row=1, column=2, sticky="e", **pad)
-        ttk.Button(bf, text="浏览文件…", command=self._browse_file).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bf, text="浏览文件夹…", command=self._browse_dir).pack(side=tk.LEFT, padx=2)
+        gy = 5
+        px_lab = (0, 12)
+        main = ttk.Frame(root, padding=(16, 14))
+        main.grid(row=0, column=0, sticky="nsew")
+        main.columnconfigure(0, weight=1)
 
-        # 输出
+        r = 0
+
+        # --- 区块 1：路径（标签列右对齐 + 输入区拉伸 + 按钮列固定）---
+        lf_io = ttk.LabelFrame(main, text="输入与输出", padding=(12, 10))
+        lf_io.grid(row=r, column=0, sticky="nsew", pady=(0, 10))
+        r += 1
+        lf_io.columnconfigure(0, minsize=88, weight=0)
+        lf_io.columnconfigure(1, weight=1)
+        lf_io.columnconfigure(2, weight=0)
+
         ttk.Label(
-            root_f,
-            text="输出目录（可选；留空则与各自输入同目录。多文件时若填写则全部 KFX 写入该目录）",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", **pad)
-        ttk.Entry(root_f, textvariable=self.var_output, width=64).grid(
-            row=3, column=0, columnspan=2, sticky="ew", **pad
-        )
-        ttk.Button(root_f, text="浏览…", command=self._browse_output).grid(
-            row=3, column=2, sticky="e", **pad
+            lf_io,
+            text="选择 EPUB / ZIP / CBZ / RAR / CBR 文件，或包含这些文件的文件夹（递归扫描）。",
+            wraplength=920,
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, gy + 2))
+
+        ttk.Label(lf_io, text="输入路径").grid(row=1, column=0, sticky="e", padx=px_lab, pady=gy)
+        ttk.Entry(lf_io, textvariable=self.var_input).grid(row=1, column=1, sticky="ew", pady=gy)
+        bf = ttk.Frame(lf_io)
+        bf.grid(row=1, column=2, sticky="ew", padx=(10, 0), pady=gy)
+        ttk.Button(bf, text="文件…", command=self._browse_file).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(bf, text="文件夹…", command=self._browse_dir).pack(side=tk.LEFT)
+
+        ttk.Label(lf_io, text="输出目录").grid(row=2, column=0, sticky="e", padx=px_lab, pady=gy)
+        ttk.Entry(lf_io, textvariable=self.var_output).grid(row=2, column=1, sticky="ew", pady=gy)
+        ttk.Button(lf_io, text="浏览…", command=self._browse_output).grid(
+            row=2, column=2, sticky="ew", padx=(10, 0), pady=gy
         )
 
-        # 元数据
-        meta = ttk.LabelFrame(root_f, text="元数据覆盖（可选）", padding=6)
-        meta.grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
-        ttk.Label(meta, text="书名").grid(row=0, column=0, sticky="e", padx=4, pady=2)
-        ttk.Entry(meta, textvariable=self.var_title, width=40).grid(
-            row=0, column=1, sticky="ew", padx=4, pady=2
-        )
-        ttk.Label(meta, text="作者").grid(row=1, column=0, sticky="e", padx=4, pady=2)
-        ttk.Entry(meta, textvariable=self.var_author, width=40).grid(
-            row=1, column=1, sticky="ew", padx=4, pady=2
-        )
-        ttk.Label(meta, text="出版社").grid(row=2, column=0, sticky="e", padx=4, pady=2)
-        ttk.Entry(meta, textvariable=self.var_publisher, width=40).grid(
-            row=2, column=1, sticky="ew", padx=4, pady=2
-        )
-        meta.columnconfigure(1, weight=1)
+        # --- 区块 2：元数据 ---
+        lf_meta = ttk.LabelFrame(main, text="元数据（可选）", padding=(12, 10))
+        lf_meta.grid(row=r, column=0, sticky="nsew", pady=(0, 10))
+        r += 1
+        lf_meta.columnconfigure(0, minsize=88, weight=0)
+        lf_meta.columnconfigure(1, weight=1)
+        for i, (lab, var) in enumerate(
+            (
+                ("书名", self.var_title),
+                ("作者", self.var_author),
+                ("出版社", self.var_publisher),
+            ),
+            start=0,
+        ):
+            ttk.Label(lf_meta, text=lab).grid(row=i, column=0, sticky="e", padx=px_lab, pady=gy)
+            ttk.Entry(lf_meta, textvariable=var).grid(row=i, column=1, sticky="ew", pady=gy)
 
-        # 选项
-        opt = ttk.LabelFrame(root_f, text="转换选项", padding=6)
-        opt.grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
-        ttk.Checkbutton(opt, text="双页裁切（需 numpy）", variable=self.var_split).grid(
-            row=0, column=0, sticky="w", padx=4, pady=2
+        # --- 区块 3：选项（勾选 2×2 等宽列；分隔线；下拉与数字统一网格）---
+        lf_opt = ttk.LabelFrame(main, text="转换选项", padding=(12, 10))
+        lf_opt.grid(row=r, column=0, sticky="nsew", pady=(0, 10))
+        r += 1
+        lf_opt.columnconfigure(0, weight=1)
+
+        chk_wrap = ttk.Frame(lf_opt)
+        chk_wrap.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        chk_wrap.columnconfigure(0, weight=1, uniform="chk")
+        chk_wrap.columnconfigure(1, weight=1, uniform="chk")
+
+        ttk.Checkbutton(chk_wrap, text="双页裁切（需 numpy）", variable=self.var_split).grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=gy
         )
-        ttk.Checkbutton(opt, text="横图逆时针旋转 90°", variable=self.var_rotate).grid(
-            row=0, column=1, sticky="w", padx=4, pady=2
+        ttk.Checkbutton(chk_wrap, text="横图逆时针旋转 90°", variable=self.var_rotate).grid(
+            row=0, column=1, sticky="w", padx=(0, 8), pady=gy
         )
-        ttk.Checkbutton(opt, text="保留中间 .kpf", variable=self.var_keep_kpf).grid(
-            row=1, column=0, sticky="w", padx=4, pady=2
+        ttk.Checkbutton(chk_wrap, text="保留中间 .kpf", variable=self.var_keep_kpf).grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=gy
         )
-        ttk.Checkbutton(opt, text="详细日志 (DEBUG)", variable=self.var_debug).grid(
-            row=1, column=1, sticky="w", padx=4, pady=2
+        ttk.Checkbutton(chk_wrap, text="详细日志 (DEBUG)", variable=self.var_debug).grid(
+            row=1, column=1, sticky="w", padx=(0, 8), pady=gy
         )
 
-        ttk.Label(opt, text="翻页方向").grid(row=2, column=0, sticky="e", padx=4, pady=2)
-        ttk.Combobox(
-            opt,
+        ttk.Separator(lf_opt, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky="ew", pady=(8, 10))
+
+        adv = ttk.Frame(lf_opt)
+        adv.grid(row=2, column=0, sticky="ew")
+        adv.columnconfigure(0, minsize=120, weight=0)
+        adv.columnconfigure(1, weight=1)
+
+        def row_adv(row: int, caption: str, w: Any) -> None:
+            ttk.Label(adv, text=caption).grid(row=row, column=0, sticky="e", padx=px_lab, pady=gy)
+            w.grid(row=row, column=1, sticky="w", pady=gy)
+
+        cb_pg = ttk.Combobox(
+            adv,
             textvariable=self.var_page_prog,
             values=("ltr", "rtl"),
             state="readonly",
-            width=12,
-        ).grid(row=2, column=1, sticky="w", padx=4, pady=2)
+            width=20,
+        )
+        row_adv(0, "翻页方向", cb_pg)
 
-        ttk.Label(opt, text="裁切顺序").grid(row=3, column=0, sticky="e", padx=4, pady=2)
-        ttk.Combobox(
-            opt,
+        cb_so = ttk.Combobox(
+            adv,
             textvariable=self.var_split_order,
             values=("right-left", "left-right"),
             state="readonly",
-            width=12,
-        ).grid(row=3, column=1, sticky="w", padx=4, pady=2)
+            width=20,
+        )
+        row_adv(1, "裁切顺序", cb_so)
 
-        ttk.Label(opt, text="KDF 布局").grid(row=4, column=0, sticky="e", padx=4, pady=2)
         self.cmb_layout = ttk.Combobox(
-            opt,
+            adv,
             textvariable=self.var_layout,
             values=("fixed", "virtual"),
             state="readonly",
-            width=12,
+            width=20,
         )
-        self.cmb_layout.grid(row=4, column=1, sticky="w", padx=4, pady=2)
-        self.cmb_layout.bind("<<ComboboxSelected>>", lambda _e: self._sync_vaxis_state())
+        row_adv(2, "KDF 布局", self.cmb_layout)
 
-        ttk.Label(opt, text="虚拟面板轴向").grid(row=5, column=0, sticky="e", padx=4, pady=2)
         self.cmb_vaxis = ttk.Combobox(
-            opt,
+            adv,
             textvariable=self.var_vaxis,
             values=("vertical", "horizontal"),
             state="readonly",
-            width=12,
+            width=20,
         )
-        self.cmb_vaxis.grid(row=5, column=1, sticky="w", padx=4, pady=2)
+        row_adv(3, "虚拟面板轴向", self.cmb_vaxis)
 
-        ttk.Label(opt, text="并发线程（多文件）").grid(row=6, column=0, sticky="e", padx=4, pady=2)
-        ttk.Spinbox(opt, from_=1, to=32, textvariable=self.var_jobs, width=8).grid(
-            row=6, column=1, sticky="w", padx=4, pady=2
-        )
+        if hasattr(ttk, "Spinbox"):
+            sp = ttk.Spinbox(adv, from_=1, to=32, textvariable=self.var_jobs, width=10)
+        else:
+            sp = tk.Spinbox(adv, from_=1, to=32, textvariable=self.var_jobs, width=10)
+        row_adv(4, "并发线程", sp)
 
-        opt.columnconfigure(1, weight=1)
+        self.cmb_layout.bind("<<ComboboxSelected>>", lambda _e: self._sync_vaxis_state())
         self._sync_vaxis_state()
 
-        # 日志
-        ttk.Label(root_f, text="日志").grid(row=6, column=0, sticky="nw", **pad)
-        log_f = ttk.Frame(root_f)
-        log_f.grid(row=7, column=0, columnspan=3, sticky="nsew", **pad)
-        self.txt_log = tk.Text(log_f, height=14, wrap="word", state="normal")
-        sb = ttk.Scrollbar(log_f, command=self.txt_log.yview)
+        # --- 日志 ---
+        ttk.Label(main, text="运行日志").grid(row=r, column=0, sticky="w", pady=(2, 6))
+        r += 1
+
+        log_box = ttk.Frame(main)
+        log_box.grid(row=r, column=0, sticky="nsew", pady=(0, 10))
+        main.rowconfigure(r, weight=1)
+        log_box.rowconfigure(0, weight=1)
+        log_box.columnconfigure(0, weight=1)
+
+        self.txt_log = tk.Text(
+            log_box,
+            height=14,
+            wrap="word",
+            font=self._log_font,
+            padx=8,
+            pady=8,
+        )
+        sb = ttk.Scrollbar(log_box, command=self.txt_log.yview)
         self.txt_log.configure(yscrollcommand=sb.set)
-        self.txt_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.txt_log.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns", padx=(4, 0))
 
-        # 按钮
-        btn_f = ttk.Frame(root_f)
-        btn_f.grid(row=8, column=0, columnspan=3, pady=8)
-        self.btn_run = ttk.Button(btn_f, text="开始转换", command=self._on_run)
-        self.btn_run.pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_f, text="清空日志", command=self._clear_log).pack(side=tk.LEFT, padx=4)
-
-        root_f.rowconfigure(7, weight=1)
-        root_f.columnconfigure(0, weight=1)
+        # --- 底部按钮 ---
+        foot = ttk.Frame(main)
+        foot.grid(row=r + 1, column=0, sticky="w", pady=(6, 0))
+        self.btn_run = ttk.Button(foot, text="开始转换", command=self._on_run)
+        self.btn_run.grid(row=0, column=0, padx=(0, 10))
+        ttk.Button(foot, text="清空日志", command=self._clear_log).grid(row=0, column=1)
 
     def _sync_vaxis_state(self) -> None:
         if self.var_layout.get() == "virtual":
@@ -426,7 +528,6 @@ class KckfxgenGui:
         def done(ok: bool, err_msg: str | None) -> None:
             self._busy = False
             self.btn_run.configure(state="normal")
-            # 排空队列
             self._poll_log_queue()
             if ok:
                 messagebox.showinfo("完成", "转换成功。")
@@ -459,6 +560,12 @@ class KckfxgenGui:
 
 
 def main() -> None:
+    try:
+        import multiprocessing
+
+        multiprocessing.freeze_support()
+    except ImportError:
+        pass
     try:
         KckfxgenGui().run()
     except KeyboardInterrupt:
