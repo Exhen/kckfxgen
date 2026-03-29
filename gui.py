@@ -4,21 +4,39 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+
+def _resolve_bundle_root() -> Path:
+    """源码运行：仓库根目录。PyInstaller 冻结：必须使用 ``_MEIPASS``（内含 ``main.py``、``kckfxgen``）。"""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+    return Path(__file__).resolve().parent
+
+
+def _crash_log_path() -> Path:
+    if sys.platform == "darwin":
+        d = Path.home() / "Library" / "Logs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "kckfxgen-gui-crash.log"
+    return Path.home() / "kckfxgen-gui-crash.log"
+
+
+_ROOT = _resolve_bundle_root()
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import logging
 import os
 import queue
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 import tkinter as tk
 from typing import Any, Literal
-
-# 保证从仓库根目录运行时能 import main、kckfxgen
-_ROOT = Path(__file__).resolve().parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
 from kckfxgen.cli_log import configure_logging
 
@@ -448,4 +466,26 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+
+        tb = traceback.format_exc()
+        log_p: Path | None = None
+        try:
+            log_p = _crash_log_path()
+            log_p.write_text(tb, encoding="utf-8")
+        except OSError:
+            log_p = None
+        try:
+            r = tk.Tk()
+            r.withdraw()
+            messagebox.showerror(
+                "kckfxgen 启动失败",
+                (f"详情已写入：\n{log_p}\n\n" if log_p else "") + tb[:1200],
+            )
+            r.destroy()
+        except Exception:
+            pass
+        sys.exit(1)

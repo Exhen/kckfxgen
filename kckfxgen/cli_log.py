@@ -7,6 +7,19 @@ import logging
 import sys
 
 
+def _stderr_is_tty() -> bool:
+    err = sys.stderr
+    if err is None:
+        return False
+    isatty = getattr(err, "isatty", None)
+    if isatty is None:
+        return False
+    try:
+        return bool(isatty())
+    except (OSError, ValueError):
+        return False
+
+
 class PrettyFormatter(logging.Formatter):
     """INFO 单行前缀；ERROR/WARNING 高亮。"""
 
@@ -48,20 +61,25 @@ def configure_logging(*, debug: bool) -> None:
     for h in root.handlers[:]:
         root.removeHandler(h)
 
-    handler = logging.StreamHandler(sys.stderr)
-    if debug:
-        handler.setLevel(logging.DEBUG)
-        handler.setFormatter(
-            logging.Formatter("%(levelname)s %(name)s: %(message)s")
-        )
-        root.setLevel(logging.DEBUG)
+    err = sys.stderr
+    if err is not None:
+        handler: logging.Handler = logging.StreamHandler(err)
+        if debug:
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(
+                logging.Formatter("%(levelname)s %(name)s: %(message)s")
+            )
+            root.setLevel(logging.DEBUG)
+        else:
+            use_color = _stderr_is_tty()
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(PrettyFormatter(color=use_color))
+            root.setLevel(logging.INFO)
+        root.addHandler(handler)
     else:
-        use_color = sys.stderr.isatty()
-        handler.setLevel(logging.INFO)
-        handler.setFormatter(PrettyFormatter(color=use_color))
-        root.setLevel(logging.INFO)
-
-    root.addHandler(handler)
+        # 无控制台（如 PyInstaller --windowed）：仅配置级别，由调用方挂 QueueHandler 等
+        root.setLevel(logging.DEBUG if debug else logging.INFO)
+        root.addHandler(logging.NullHandler())
 
     # Pillow 在根 logger 为 DEBUG 时会对每个 PNG chunk 打 DEBUG，淹没业务日志
     logging.getLogger("PIL").setLevel(logging.WARNING)
@@ -71,13 +89,15 @@ def print_run_header(*, input_count: int, jobs: int | None, debug: bool) -> None
     """非 debug 时在 stderr 打印简短横幅。"""
     if debug:
         return
-    tty = sys.stderr.isatty()
+    out = sys.stderr
+    if out is None:
+        return
+    tty = _stderr_is_tty()
     dim = "\033[2m" if tty else ""
     bold = "\033[1m" if tty else ""
     cyan = "\033[36m" if tty else ""
     reset = "\033[0m" if tty else ""
     line = "─" * 48
-    out = sys.stderr
     out.write(f"{dim}{line}{reset}\n")
     out.write(f"{bold}{cyan}kckfxgen{reset}{dim} · ")
     if input_count == 1:

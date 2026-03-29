@@ -86,6 +86,9 @@ def _pyinstaller_cmd() -> list[str]:
         "amazon.ion.simpleion",
         "--hidden-import",
         "lxml.etree",
+        # macOS / 部分环境：未打入 Tcl/Tk 时 tkinter 初始化即崩溃（窗口应用无控制台）
+        "--collect-all",
+        "tkinter",
     ]
 
     if sysname == "Windows":
