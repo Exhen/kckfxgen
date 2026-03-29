@@ -93,35 +93,61 @@ def _kfx_basename_title_author(
 
 
 # 与 Kindle Create 漫画工程一致（参见 book_state，固定版式 + 漫画输入/目标类型）
-# book_reading_direction：0/2 与 kfxlib KNOWN_KCB_DATA 一致；与 page_progression 联动（ltr→0，rtl→2）
+# book_reading_direction：ltr 须为 1（KC 默认）；rtl 为 2。勿对 LTR 漫画写 0，否则部分客户端不将本书按固定版式漫画识别。
+# book_virtual_panelmovement：固定视图 0；虚拟视图 1=纵向分镜、2=横向分镜（与 KDF 中层 layout 一致，供阅读器参考）
 _COMIC_BOOK_STATE_BASE = {
     "book_fl_type": 1,
     "book_input_type": 4,
     "book_reading_option": 1,
     "book_target_type": 3,
-    "book_virtual_panelmovement": 0,
 }
 
 
 def _kcb_book_reading_direction(
     page_progression: Literal["ltr", "rtl"],
 ) -> int:
-    return 2 if page_progression == "rtl" else 0
+    return 2 if page_progression == "rtl" else 1
 
 
-def _comic_book_state(page_progression: Literal["ltr", "rtl"]) -> dict[str, int]:
+def _kcb_virtual_panel_movement(
+    layout_view: Literal["fixed", "virtual"],
+    virtual_panel_axis: Literal["vertical", "horizontal"],
+) -> int:
+    if layout_view == "fixed":
+        return 0
+    return 1 if virtual_panel_axis == "vertical" else 2
+
+
+def _comic_book_state(
+    page_progression: Literal["ltr", "rtl"],
+    layout_view: Literal["fixed", "virtual"] = "fixed",
+    virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
+) -> dict[str, int]:
     state = dict(_COMIC_BOOK_STATE_BASE)
     state["book_reading_direction"] = _kcb_book_reading_direction(page_progression)
+    state["book_virtual_panelmovement"] = _kcb_virtual_panel_movement(
+        layout_view, virtual_panel_axis
+    )
     return state
 
 
-def _write_kcb(kpf_dir: Path, *, page_progression: Literal["ltr", "rtl"]) -> None:
+def _write_kcb(
+    kpf_dir: Path,
+    *,
+    page_progression: Literal["ltr", "rtl"],
+    layout_view: Literal["fixed", "virtual"] = "fixed",
+    virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
+) -> None:
     kcb_path = kpf_dir / "book.kcb"
     logger.debug("写入 book.kcb: %s", kcb_path)
     with kcb_path.open("w", encoding="utf-8") as f:
         json.dump(
             {
-                "book_state": _comic_book_state(page_progression),
+                "book_state": _comic_book_state(
+                    page_progression,
+                    layout_view=layout_view,
+                    virtual_panel_axis=virtual_panel_axis,
+                ),
                 "content_hash": None,
                 "metadata": {
                     "book_path": "resources",
@@ -164,11 +190,14 @@ def _images_to_kpf_zip(
     portrait_cover: bool = False,
     rotate_landscape_90: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
+    layout_view: Literal["fixed", "virtual"] = "fixed",
+    virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
 ) -> None:
     """在已存在的 ``tmp_path`` 工作目录内生成 KPF 目录树并打包为 ``dest``（.kpf ZIP）。
 
     ``portrait_cover=True``（漫画压缩包）时，``kindle_title_metadata.cover_image`` 指向首张竖屏图对应资源，阅读顺序不变。
     ``rotate_landscape_90=True`` 时，宽>高 的页在写入 KDF 前逆时针旋转 90°，以竖屏展示。
+    ``layout_view=virtual`` 时生成与 Kindle Create 虚拟面板相近的 KDF（``virtual_panel: enabled``、yj.authoring 链等）。
     """
     if split_spreads:
         from .spread_split import expand_spread_pages
@@ -203,8 +232,15 @@ def _images_to_kpf_zip(
         cover_from_first_portrait=portrait_cover,
         rotate_landscape_90=rotate_landscape_90,
         page_progression=page_progression,
+        layout_view=layout_view,
+        virtual_panel_axis=virtual_panel_axis,
     )
-    _write_kcb(kpf_dir, page_progression=page_progression)
+    _write_kcb(
+        kpf_dir,
+        page_progression=page_progression,
+        layout_view=layout_view,
+        virtual_panel_axis=virtual_panel_axis,
+    )
     _write_manifest(resources)
 
     archive_stem = tmp_path / "out"
@@ -226,6 +262,8 @@ def epub_to_kpf(
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
+    layout_view: Literal["fixed", "virtual"] = "fixed",
+    virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -282,6 +320,8 @@ def epub_to_kpf(
             split_page_order=split_page_order,
             rotate_landscape_90=rotate_landscape_90,
             page_progression=page_progression,
+            layout_view=layout_view,
+            virtual_panel_axis=virtual_panel_axis,
         )
 
     logger.debug("环节: 临时目录已清理，流程结束")
@@ -296,6 +336,8 @@ def comic_archive_to_kpf(
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
+    layout_view: Literal["fixed", "virtual"] = "fixed",
+    virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -351,6 +393,8 @@ def comic_archive_to_kpf(
             portrait_cover=True,
             rotate_landscape_90=rotate_landscape_90,
             page_progression=page_progression,
+            layout_view=layout_view,
+            virtual_panel_axis=virtual_panel_axis,
         )
 
     logger.debug("环节: 漫画包临时目录已清理")
@@ -365,6 +409,9 @@ def convert_to_kfx(
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
+    layout_view: Literal["fixed", "virtual"] = "fixed",
+    virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
+    keep_kpf: bool = False,
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -396,6 +443,8 @@ def convert_to_kfx(
                 split_page_order=split_page_order,
                 rotate_landscape_90=rotate_landscape_90,
                 page_progression=page_progression,
+                layout_view=layout_view,
+                virtual_panel_axis=virtual_panel_axis,
                 book_title=book_title,
                 book_author=book_author,
                 book_publisher=book_publisher,
@@ -408,6 +457,8 @@ def convert_to_kfx(
                 split_page_order=split_page_order,
                 rotate_landscape_90=rotate_landscape_90,
                 page_progression=page_progression,
+                layout_view=layout_view,
+                virtual_panel_axis=virtual_panel_axis,
                 book_title=book_title,
                 book_author=book_author,
                 book_publisher=book_publisher,
@@ -421,6 +472,10 @@ def convert_to_kfx(
         if not _cli_verbose():
             logger.info("KPF → KFX（kfxlib / KfxContainer）…")
         kpf_path_to_kfx_file(tmp_kpf, out_kfx, cde_pdoc=True)
+        if keep_kpf:
+            kpf_dest = out_kfx.with_suffix(".kpf")
+            shutil.copy2(tmp_kpf, kpf_dest)
+            logger.info("已保留中间 KPF → %s", kpf_dest)
     finally:
         try:
             tmp_kpf.unlink(missing_ok=True)
@@ -445,6 +500,9 @@ def convert_epub_to_kfx(
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
+    layout_view: Literal["fixed", "virtual"] = "fixed",
+    virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
+    keep_kpf: bool = False,
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -457,6 +515,9 @@ def convert_epub_to_kfx(
         split_page_order=split_page_order,
         rotate_landscape_90=rotate_landscape_90,
         page_progression=page_progression,
+        layout_view=layout_view,
+        virtual_panel_axis=virtual_panel_axis,
+        keep_kpf=keep_kpf,
         book_title=book_title,
         book_author=book_author,
         book_publisher=book_publisher,

@@ -8,7 +8,7 @@ Convert **EPUB** files or **comic archives** (ZIP / CBZ / RAR / CBR) to Kindle f
 
 Compared with MOBI-based comics, KFX comics usually **turn pages and load faster** with large, high-resolution artwork, and are **less likely to freeze** the device. Fixed layout keeps **pages tidy** (e.g. centered, fewer stray margins). When building the KDF, each page gets an **`orientation`** field (**portrait** / **landscape**) from the image dimensions **after applying EXIF orientation**, and book metadata declares support for **both** portrait and landscape so mixed vertical and horizontal pages behave correctly.
 
-Each successful run writes one **`{sanitized_stem}_{random}.kfx`** into the chosen output directory. Intermediate **`.kpf`** is kept only in a temp folder and removed afterward.
+Each successful run writes one **`书名-作者.kfx`** (sanitized title–author; collision suffixes `_2`, `_3`, …) into the chosen output directory. By default the intermediate **`.kpf`** lives only in a temp folder and is deleted; use **`--keep-kpf`** to copy a same-stem **`.kpf`** next to the **`.kfx`** for debugging or Kindle Previewer.
 
 ## Requirements
 
@@ -49,7 +49,10 @@ pip install rarfile
 | `--split-spreads` | Wide images (width ≥ height×1.25): split at the **horizontal centre** only if a **blank binding gutter** is detected; otherwise keep the full image (**off** by default) |
 | `--split-page-order` | With `--split-spreads`: `right-left` (default, right half then left) or `left-right` |
 | `--rotate-landscape-90` | Before writing KDF: rotate **landscape** pages (width > height) **90° counter‑clockwise** so they display as portrait; portrait pages unchanged |
-| `--page-progression` | KPF / KDF reading direction: `ltr` (default, left‑to‑right) or `rtl` (right‑to‑left, typical for manga). Sets `book.kcb` `book_reading_direction` and `book.kdf` `document_data.direction` |
+| `--page-progression` | KPF / KDF reading direction: `ltr` (default) or `rtl` (manga-style). Sets `book.kdf` `document_data.direction` and `book.kcb` `book_reading_direction` (**1** = LTR, **2** = RTL, aligned with Kindle Create comics) |
+| `--layout-view` | KDF page structure: **`fixed`** (default, whole-page scale) or **`virtual`** (Kindle Create–style virtual panels: `virtual_panel: enabled`, `pan_zoom`, `yj.authoring` chain, three-slot SPM, `yj_non_pdf_fixed_layout` in `content_features`) |
+| `--virtual-panel-axis` | Only when **`--layout-view virtual`**: middle container `layout` — **`vertical`** (default) or **`horizontal`** for virtual strip direction |
+| `--keep-kpf` | After a successful KFX build, also write **`同名.kpf`** in the same directory as the **`.kfx`** |
 | `--title` | Override **title** (see below for comic archives; for EPUB overrides OPF `dc:title`) |
 | `--author` | Override **author** (comic archives: parsed from filename; EPUB overrides `dc:creator`) |
 | `--publisher` | Override **publisher** (comic archives: parsed from filename; EPUB overrides `dc:publisher`) |
@@ -99,15 +102,34 @@ python main.py path/to/comic.zip --split-spreads --split-page-order left-right
 # Right-to-left page progression (manga-style; KCB + KDF)
 python main.py path/to/manga.cbz --page-progression rtl
 
+# Virtual-panel KDF (optional; default remains fixed whole-page)
+python main.py path/to/comic.cbz --layout-view virtual --virtual-panel-axis vertical
+
+# Keep intermediate .kpf beside the .kfx (e.g. for Kindle Previewer)
+python main.py path/to/comic.epub --keep-kpf
+
 # Debug log
 python main.py path/to/comic.epub -d
 ```
 
 ### Python API
 
-`kckfxgen.pipeline.convert_to_kfx`, `epub_to_kpf`, `comic_archive_to_kpf`, and `convert_epub_to_kfx` accept the same behaviour via **`page_progression="ltr"`** (default) or **`page_progression="rtl"`**.
+`kckfxgen.pipeline.convert_to_kfx`, `epub_to_kpf`, `comic_archive_to_kpf`, and `convert_epub_to_kfx` support:
+
+- **`page_progression`**: `"ltr"` (default) or `"rtl"`
+- **`layout_view`**: `"fixed"` (default) or `"virtual"`
+- **`virtual_panel_axis`**: `"vertical"` (default) or `"horizontal"` (when `layout_view="virtual"`)
+- **`keep_kpf`**: `True` to copy the temp **`.kpf`** next to the output **`.kfx`**
 
 Run these from the **repository root**.
+
+## Inspecting `book.kdf` metadata
+
+`scripts/kdf_book_metadata_dump.py` decodes the **`book_metadata`** Ion blob to a tree or JSON (handles fingerprint-stripped KDF SQLite the same way as the writer). Example:
+
+```bash
+python scripts/kdf_book_metadata_dump.py path/to/book.kdf --json
+```
 
 ## Standalone spread detector (images only)
 

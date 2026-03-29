@@ -189,6 +189,8 @@ class ImageKdfWriter:
         cover_from_first_portrait: bool = False,
         rotate_landscape_90: bool = False,
         page_progression: Literal["ltr", "rtl"] = "ltr",
+        layout_view: Literal["fixed", "virtual"] = "fixed",
+        virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
     ) -> None:
         self.res_dir = db_path.parent / "res"
         cover_idx = (
@@ -199,7 +201,7 @@ class ImageKdfWriter:
             else 0
         )
         logger.debug(
-            "[kdf] 初始化 KDF: db=%s res_dir=%s 图片数=%d cover_idx=%d portrait=%s rotate_landscape_90=%s page_progression=%s",
+            "[kdf] 初始化 KDF: db=%s res_dir=%s 图片数=%d cover_idx=%d portrait=%s rotate_landscape_90=%s page_progression=%s layout_view=%s virtual_panel_axis=%s",
             db_path,
             self.res_dir,
             len(image_paths),
@@ -207,6 +209,8 @@ class ImageKdfWriter:
             cover_from_first_portrait,
             rotate_landscape_90,
             page_progression,
+            layout_view,
+            virtual_panel_axis,
         )
         self.res_dir.mkdir(exist_ok=True)
         db_path = db_path.resolve()
@@ -233,6 +237,7 @@ class ImageKdfWriter:
                 all_structure_ids: dict[str, list[tuple[str, int]]] = {}
                 section_ids: list[str] = []
                 first_cover_res = ""
+                authoring_aux_ids: list[str] = []
 
                 for idx, img_path in enumerate(image_paths):
                     logger.debug(
@@ -241,22 +246,40 @@ class ImageKdfWriter:
                         len(image_paths),
                         img_path,
                     )
-                    section_id, spm_list, res_id = self._add_fixed_image_section(
-                        img_path,
-                        rotate_landscape_90=rotate_landscape_90,
-                    )
+                    if layout_view == "virtual":
+                        section_id, spm_list, res_id, aux_id = (
+                            self._add_virtual_panel_image_section(
+                                img_path,
+                                rotate_landscape_90=rotate_landscape_90,
+                                virtual_panel_axis=virtual_panel_axis,
+                            )
+                        )
+                        authoring_aux_ids.append(aux_id)
+                    else:
+                        section_id, spm_list, res_id = self._add_fixed_image_section(
+                            img_path,
+                            rotate_landscape_90=rotate_landscape_90,
+                        )
                     section_ids.append(section_id)
                     all_structure_ids[section_id] = spm_list
                     if idx == cover_idx:
                         first_cover_res = res_id
 
+                authoring_root_id: str | None = None
+                if layout_view == "virtual":
+                    authoring_root_id = self._insert_authoring_root(authoring_aux_ids)
+
                 logger.debug("[kdf] 写入 book_metadata 与 content_features")
-                self._insert_book_metadata(first_cover_res)
+                self._insert_book_metadata(
+                    first_cover_res, layout_view=layout_view
+                )
                 logger.debug("[kdf] 写入 document_data / metadata（阅读顺序与 sections）")
                 self._create_document_data(
                     section_ids,
                     cover_res_id=first_cover_res,
                     page_progression=page_progression,
+                    layout_view=layout_view,
+                    authoring_root_id=authoring_root_id,
                 )
                 logger.debug("[kdf] 写入 yj.section_pid_count_map")
                 self._create_section_pid_count_map(all_structure_ids)
@@ -351,7 +374,12 @@ class ImageKdfWriter:
             ),
         )
 
-    def _insert_book_metadata(self, cover_res_id: str) -> None:
+    def _insert_book_metadata(
+        self,
+        cover_res_id: str,
+        *,
+        layout_view: Literal["fixed", "virtual"] = "fixed",
+    ) -> None:
         # 勿在 kindle_title_metadata 中写入 cde_content_type / ASIN 等：kpf_container 据此会把
         # is_kpf_prepub=False，从而跳过 fix_kpf_prepub_book（不生成 $389/$264/$265/$419/$550），
         # 且 $609 的 fragment.fid 与 section_name 的 -spm 规则不一致。PDOC 由 kpf_to_kfx 里 YJ_Metadata 写入。
@@ -395,7 +423,10 @@ class ImageKdfWriter:
                         "category": "kindle_capability_metadata",
                         "metadata": [
                             {"key": "yj_fixed_layout", "value": 1},
-                            {"key": "yj_publisher_panels", "value": 1},
+                            {
+                                "key": "yj_publisher_panels",
+                                "value": 0 if layout_view == "virtual" else 1,
+                            },
                         ],
                     },
                     {
@@ -414,10 +445,24 @@ class ImageKdfWriter:
         self._insert_fragment_property(
             "book_metadata", "element_type", "book_metadata"
         )
-        self._insert_content_features()
+        self._insert_content_features(layout_view=layout_view)
 
-    def _insert_content_features(self) -> None:
-        ion_text = """{
+    def _insert_content_features(
+        self, *, layout_view: Literal["fixed", "virtual"] = "fixed"
+    ) -> None:
+        if layout_view == "virtual":
+            ion_text = """{
+ kfx_id: content_features,
+ features: [
+ {
+ namespace: "com.amazon.yjconversion",
+ key: "yj_non_pdf_fixed_layout",
+ version_info: {version: {major_version: 2, minor_version: 0}}
+ }
+ ]
+}"""
+        else:
+            ion_text = """{
  kfx_id: content_features,
  features: [
  {
@@ -431,6 +476,188 @@ class ImageKdfWriter:
         self._insert_fragment_property(
             "content_features", "element_type", "content_features"
         )
+
+    def _insert_authoring_root(self, resource_aux_ids: list[str]) -> str:
+        """Kindle Create 虚拟视图：document_data.auxiliary_data.yj.authoring 指向根 auxiliary。"""
+        if not resource_aux_ids:
+            raise ValueError("virtual layout 需要至少一页图源 auxiliary。")
+        root_id = self.create_fragment_id("d")
+        parts = ",\n ".join(f'kfx_id::"{x}"' for x in resource_aux_ids)
+        ion_text = f"""{{
+ kfx_id: kfx_id::"{root_id}",
+ metadata: [
+ {{
+ key: "auxData_resource_list",
+ value: [
+ {parts}
+ ]
+ }}
+ ]
+}}"""
+        self._insert_blob_fragment(root_id, ion_text, "auxiliary_data")
+        self._insert_fragment_property(root_id, "element_type", "auxiliary_data")
+        return root_id
+
+    def _add_virtual_panel_image_section(
+        self,
+        image_path: Path,
+        *,
+        rotate_landscape_90: bool = False,
+        virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
+    ) -> tuple[str, list[tuple[str, int]], str, str]:
+        """虚拟视图（对齐 Kindle Create）：页模板 ``virtual_panel: enabled``、SPM 三槽、中层 ``layout: vertical|horizontal``。"""
+        assert self.res_dir is not None
+        image_bytes, ion_fmt, im_width, im_height = _read_raster_passthrough(
+            image_path
+        )
+        if rotate_landscape_90 and im_width > im_height:
+            image_bytes, im_width, im_height = _encode_rotated_raster(
+                image_bytes, ion_fmt
+            )
+            logger.debug(
+                "[kdf] 横幅旋转 90°（逆时针）: %s -> %dx%d",
+                image_path.name,
+                im_width,
+                im_height,
+            )
+
+        axis_ion = (
+            "vertical" if virtual_panel_axis == "vertical" else "horizontal"
+        )
+        section_id = self.create_fragment_id("c")
+        section_struct_id = self.create_fragment_id("i")
+        middle_id = self.create_fragment_id("i")
+        image_struct_id = self.create_fragment_id("i")
+        story_id = self.create_fragment_id("l")
+        aux_id = self.create_fragment_id("d")
+
+        section_text = f"""{{
+ section_name: kfx_id::"{section_id}",
+ page_templates: [
+ structure::{{
+ kfx_id: kfx_id::"{section_struct_id}",
+ story_name: kfx_id::"{story_id}",
+ fixed_width: {im_width},
+ virtual_panel: enabled,
+ fixed_height: {im_height},
+ layout: scale_fit,
+ float: center,
+ type: container
+ }}
+ ]
+}}"""
+        self._insert_blob_fragment(section_id, section_text, "section")
+        self._insert_fragment_property(section_id, "element_type", "section")
+
+        storyline_text = f"""{{
+ story_name: kfx_id::"{story_id}",
+ content_list: [
+ kfx_id::"{middle_id}"
+ ]
+}}"""
+        self._insert_blob_fragment(story_id, storyline_text, "storyline")
+        self._insert_fragment_properties(
+            [
+                (story_id, "child", middle_id),
+                (story_id, "child", story_id),
+                (story_id, "element_type", "storyline"),
+            ]
+        )
+
+        middle_text = f"""{{
+ kfx_id: kfx_id::"{middle_id}",
+ width: {im_width},
+ height: {im_height},
+ sizing_bounds: content_bounds,
+ layout: {axis_ion},
+ type: container,
+ content_list: [
+ kfx_id::"{image_struct_id}"
+ ]
+}}"""
+        self._insert_blob_fragment(middle_id, middle_text, "structure")
+        self._insert_fragment_properties(
+            [
+                (middle_id, "element_type", "structure"),
+                (middle_id, "child", image_struct_id),
+            ]
+        )
+
+        res_id = self.create_fragment_id("e")
+        res_loc_id = self.create_fragment_id("rsrc")
+        dest = self.res_dir / res_loc_id
+        dest.write_bytes(image_bytes)
+
+        loc_json = json.dumps(str(image_path.resolve()), ensure_ascii=False)
+        mtime_s = str(int(image_path.stat().st_mtime))
+        size_s = str(len(image_bytes))
+
+        aux_text = f"""{{
+ kfx_id: kfx_id::"{aux_id}",
+ metadata: [
+ {{key: "location", value: {loc_json}}},
+ {{key: "modified_time", value: "{mtime_s}"}},
+ {{key: "size", value: "{size_s}"}},
+ {{key: "type", value: "resource"}},
+ {{key: "resource_stream", value: "{res_loc_id}"}}
+ ]
+}}"""
+        self._insert_blob_fragment(aux_id, aux_text, "auxiliary_data")
+        self._insert_fragment_property(aux_id, "element_type", "auxiliary_data")
+
+        # 勿写入带点的 Ion 字段名（如 yj.authoring.source_file_name）：kfxlib IonBinary 会解析为多值导致 decode 失败。
+        res_text = f"""{{
+ format: {ion_fmt},
+ location: "{res_loc_id}",
+ auxiliary_data: kfx_id::"{aux_id}",
+ resource_width: {im_width}.0e0,
+ resource_name: kfx_id::"{res_id}",
+ resource_height: {im_height}.0e0
+}}"""
+        self._insert_blob_fragment(res_id, res_text, "external_resource")
+        self._insert_fragment_properties(
+            [
+                (res_id, "child", res_loc_id),
+                (res_id, "element_type", "external_resource"),
+                (res_loc_id, "element_type", "bcRawMedia"),
+            ]
+        )
+        self._insert_fragment(res_loc_id, "blob", image_bytes)
+
+        struct_text = f"""{{
+ kfx_id: kfx_id::"{image_struct_id}",
+ width: {im_width},
+ resource_name: kfx_id::"{res_id}",
+ height: {im_height},
+ sizing_bounds: content_bounds,
+ type: image,
+ position: fixed
+}}"""
+        self._insert_blob_fragment(image_struct_id, struct_text, "structure")
+        self._insert_fragment_properties(
+            [
+                (image_struct_id, "element_type", "structure"),
+                (image_struct_id, "child", res_id),
+            ]
+        )
+
+        spm_text = f"""{{
+ section_name: kfx_id::"{section_id}",
+ contains: [[1, kfx_id::"{section_struct_id}"], [2, kfx_id::"{middle_id}"], [3, kfx_id::"{image_struct_id}"]]
+}}"""
+        spm_id = f"{section_id}-spm"
+        self._insert_blob_fragment(spm_id, spm_text, "section_position_id_map")
+        self._insert_fragment_property(
+            spm_id, "element_type", "section_position_id_map"
+        )
+        self._insert_section_auxiliary_data(section_id)
+
+        spm_list: list[tuple[str, int]] = [
+            (section_struct_id, 0),
+            (middle_id, 1),
+            (image_struct_id, 2),
+        ]
+        return section_id, spm_list, res_id, aux_id
 
     def _insert_section_auxiliary_data(self, section_id: str) -> None:
         ad_id = section_id + "-ad"
@@ -570,10 +797,36 @@ class ImageKdfWriter:
         *,
         cover_res_id: str,
         page_progression: Literal["ltr", "rtl"],
+        layout_view: Literal["fixed", "virtual"] = "fixed",
+        authoring_root_id: str | None = None,
     ) -> None:
         section_ion_str = ",".join(f'kfx_id::"{s}"' for s in section_ids)
         dir_ion = "rtl" if page_progression == "rtl" else "ltr"
-        document_data_ion = f"""{{
+        if layout_view == "virtual":
+            if not authoring_root_id:
+                raise ValueError("virtual layout 需要 authoring_root_id")
+            max_id = self.fragment_id
+            document_data_ion = f"""{{
+ direction: {dir_ion},
+ writing_mode: horizontal_tb,
+ column_count: auto,
+ selection: enabled,
+ spacing_percent_base: width,
+ font_size: 16.0e0,
+ max_id: {max_id},
+ pan_zoom: enabled,
+ auxiliary_data: {{
+  'yj.authoring': kfx_id::"{authoring_root_id}"
+ }},
+ reading_orders: [
+ {{
+ reading_order_name: default,
+ sections: [{section_ion_str}]
+ }}
+ ]
+}}"""
+        else:
+            document_data_ion = f"""{{
  direction: {dir_ion},
  writing_mode: horizontal_tb,
  column_count: auto,

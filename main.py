@@ -88,6 +88,9 @@ def _convert_job(
     split_page_order: Literal["right-left", "left-right"],
     rotate_landscape_90: bool,
     page_progression: Literal["ltr", "rtl"],
+    layout_view: Literal["fixed", "virtual"],
+    virtual_panel_axis: Literal["vertical", "horizontal"],
+    keep_kpf: bool,
     book_title: str | None,
     book_author: str | None,
     book_publisher: str | None,
@@ -100,6 +103,9 @@ def _convert_job(
             split_page_order=split_page_order,
             rotate_landscape_90=rotate_landscape_90,
             page_progression=page_progression,
+            layout_view=layout_view,
+            virtual_panel_axis=virtual_panel_axis,
+            keep_kpf=keep_kpf,
             book_title=book_title,
             book_author=book_author,
             book_publisher=book_publisher,
@@ -191,6 +197,20 @@ def main() -> None:
         help="KPF/KDF 翻页方向：ltr=从左向右（默认），rtl=从右向左（日漫常见）",
     )
     parser.add_argument(
+        "--layout-view",
+        choices=("fixed", "virtual"),
+        default="fixed",
+        dest="layout_view",
+        help="KDF 页结构：fixed=整页缩放（默认）；virtual=虚拟面板（Kindle Create 式，含 pan_zoom、yj.authoring）",
+    )
+    parser.add_argument(
+        "--virtual-panel-axis",
+        choices=("vertical", "horizontal"),
+        default="vertical",
+        dest="virtual_panel_axis",
+        help="仅 virtual 时有效：中层容器 layout，纵向或横向虚拟分镜（默认 vertical）",
+    )
+    parser.add_argument(
         "--title",
         default=None,
         metavar="STR",
@@ -207,6 +227,11 @@ def main() -> None:
         default=None,
         metavar="STR",
         help="覆盖出版社（漫画包：文件名末尾 […] 或 (…) 内；EPUB 覆盖 dc:publisher）",
+    )
+    parser.add_argument(
+        "--keep-kpf",
+        action="store_true",
+        help="成功生成 KFX 后，在与 .kfx 相同目录下保留同名 .kpf（中间包，便于 Kindle Previewer 等调试）",
     )
     args = parser.parse_args()
 
@@ -244,6 +269,10 @@ def main() -> None:
         logger.info(
             "批量处理：--title / --author / --publisher 将应用于本次列出的每个输入文件"
         )
+    if n > 1 and args.keep_kpf:
+        logger.info(
+            "批量处理：每个输入会在其对应输出目录各生成一份与 KFX 同主名的 .kpf"
+        )
 
     print_run_header(
         input_count=n,
@@ -261,6 +290,9 @@ def main() -> None:
                 split_page_order=args.split_page_order,
                 rotate_landscape_90=args.rotate_landscape_90,
                 page_progression=args.page_progression,
+                layout_view=args.layout_view,
+                virtual_panel_axis=args.virtual_panel_axis,
+                keep_kpf=args.keep_kpf,
                 book_title=args.title,
                 book_author=args.author,
                 book_publisher=args.publisher,
@@ -287,6 +319,9 @@ def main() -> None:
                 split_page_order=args.split_page_order,
                 rotate_landscape_90=args.rotate_landscape_90,
                 page_progression=args.page_progression,
+                layout_view=args.layout_view,
+                virtual_panel_axis=args.virtual_panel_axis,
+                keep_kpf=args.keep_kpf,
                 book_title=args.title,
                 book_author=args.author,
                 book_publisher=args.publisher,

@@ -8,7 +8,7 @@
 
 与基于 MOBI 的漫画相比，KFX 漫画通常在大体积、高分辨率图源下**翻页与加载更快**，设备上**更不容易卡死**；固定版式下**版面更规整**，例如**居中对齐、减少多余白边**，阅读体验更丝滑。生成 KDF 时会按**每张图在应用 EXIF 方向后的宽高**写入 **`orientation`（portrait / landscape）**，并在图书元数据中声明同时支持竖屏与横屏，便于混排竖页、横页。
 
-每次成功转换会在目标目录生成 **`{安全主名}_{随机}.kfx`**；中间 **`.kpf`** 仅存在于临时目录，结束后删除。
+每次成功转换会在目标目录生成 **`书名-作者.kfx`**（书名、作者经安全化；重名时加 `_2`、`_3`…）。默认中间 **`.kpf`** 仅在临时目录生成并在结束后删除；使用 **`--keep-kpf`** 可在 **`.kfx` 同目录** 再保留一份**同主名**的 **`.kpf`**，便于 Kindle Previewer 或对照调试。
 
 ## 依赖
 
@@ -49,7 +49,10 @@ pip install rarfile
 | `--split-spreads` | 宽幅图（宽≥高×1.25）：仅当检出**空白装订中缝**时沿**几何正中**裁成两半并插入阅读顺序；否则保留整图（默认**关闭**） |
 | `--split-page-order` | 与 `--split-spreads` 配合：`right-left`（默认，先右半再左半）或 `left-right`（先左后右） |
 | `--rotate-landscape-90` | 写入 KDF 前将**横图**（宽 > 高）**逆时针旋转 90°** 以竖屏展示；竖图不变 |
-| `--page-progression` | KPF / KDF **翻页方向**：`ltr`（默认，从左向右）或 `rtl`（从右向左，日漫常见）。同步写入 `book.kcb` 的 `book_reading_direction` 与 `book.kdf` 中 `document_data` 的 `direction` |
+| `--page-progression` | KPF / KDF **翻页方向**：`ltr`（默认）或 `rtl`（日漫式）。写入 `book.kdf` 的 `document_data.direction`，以及 `book.kcb` 的 `book_reading_direction`（**LTR→1**、**RTL→2**，与 Kindle Create 漫画工程一致） |
+| `--layout-view` | KDF **页结构**：**`fixed`**（默认，整页缩放）或 **`virtual`**（Kindle Create 式虚拟面板：`virtual_panel: enabled`、`pan_zoom`、`yj.authoring` 链、三槽 SPM、`content_features` 为 `yj_non_pdf_fixed_layout` 等） |
+| `--virtual-panel-axis` | 仅 **`--layout-view virtual`** 时有效：中层容器 **`layout`**，**`vertical`**（默认）或 **`horizontal`**，表示虚拟分镜条带方向 |
+| `--keep-kpf` | 成功生成 KFX 后，在 **`.kfx` 同目录** 再写入与 KFX **同主名**的 **`.kpf`** |
 | `--title` | 覆盖**书名**（见下：漫画包默认识别；EPUB 则覆盖 OPF `dc:title`） |
 | `--author` | 覆盖**作者**（漫画包：文件名中「 - 」右侧；EPUB 覆盖 `dc:creator`） |
 | `--publisher` | 覆盖**出版社**（漫画包：文件名末尾 […] 或 (…) 内；EPUB 覆盖 `dc:publisher`） |
@@ -99,15 +102,34 @@ python main.py 路径/漫画.zip --split-spreads --split-page-order left-right
 # 从右向左翻页（日漫式；KCB + KDF 一致）
 python main.py 路径/漫画.cbz --page-progression rtl
 
+# 虚拟面板式 KDF（可选；默认仍为整页 fixed）
+python main.py 路径/漫画.cbz --layout-view virtual --virtual-panel-axis vertical
+
+# 保留中间 .kpf 与 .kfx 同目录（如用 Kindle Previewer 打开）
+python main.py 路径/漫画.epub --keep-kpf
+
 # 调试日志
 python main.py 路径/漫画.epub -d
 ```
 
 ### Python API
 
-`kckfxgen.pipeline` 中的 `convert_to_kfx`、`epub_to_kpf`、`comic_archive_to_kpf`、`convert_epub_to_kfx` 可通过关键字参数 **`page_progression="ltr"`**（默认）或 **`page_progression="rtl"`** 控制相同行为。
+`kckfxgen.pipeline` 中 `convert_to_kfx`、`epub_to_kpf`、`comic_archive_to_kpf`、`convert_epub_to_kfx` 支持：
+
+- **`page_progression`**：`"ltr"`（默认）或 `"rtl"`
+- **`layout_view`**：`"fixed"`（默认）或 `"virtual"`
+- **`virtual_panel_axis`**：`"vertical"`（默认）或 `"horizontal"`（在 `layout_view="virtual"` 时生效）
+- **`keep_kpf`**：设为 `True` 时在输出 **`.kfx` 同目录** 保留同名 **`.kpf`**
 
 从**项目根目录**执行上述命令。
+
+## 查看 book.kdf 中的 book_metadata
+
+`scripts/kdf_book_metadata_dump.py` 可将 **`book_metadata`** Ion 片段解码为树状或 JSON（与写入端一致处理带指纹条的 KDF SQLite）。示例：
+
+```bash
+python scripts/kdf_book_metadata_dump.py 路径/book.kdf --json
+```
 
 ## 独立双页检测工具（仅处理散图）
 

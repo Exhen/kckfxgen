@@ -101,7 +101,16 @@ def ion_to_tree(obj: Any) -> Any:
     if isinstance(obj, IonPyText):
         return str(obj)
     if isinstance(obj, IonPySymbol):
-        return obj.ion_text if obj.ion_text is not None else f"symbol::{obj.ion_nickname}"
+        t = getattr(obj, "text", None)
+        if t is not None:
+            return str(t)
+        it = getattr(obj, "ion_text", None)
+        if it is not None:
+            return it
+        nick = getattr(obj, "ion_nickname", None)
+        if nick is not None:
+            return f"symbol::{nick}"
+        return str(obj)
 
     t = getattr(obj, "ion_type", None)
     if t is IonType.STRUCT or t == IonType.STRUCT:
