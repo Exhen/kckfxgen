@@ -4,7 +4,7 @@
 
 **[中文版 / Chinese](README_zh.md)**
 
-Convert **EPUB** files or **comic archives** (ZIP / CBZ / RAR / CBR) to Kindle fixed-layout comic **KFX** **without Kindle Previewer**. The tool builds a Kindle Create–style **`.kpf`** (ZIP with `book.kdf`), then repackages it into a single **`.kfx`** using the same **CONT** pipeline as [calibre-kfx-output](https://github.com/dstaley/calibre-kfx-output)’s [`kfx_container.py`](https://github.com/dstaley/calibre-kfx-output/blob/master/kfxlib/kfx_container.py) (`KpfContainer` → `KpfBook` fix-up → `KfxContainer.serialize`). The implementation is included in-tree as `kckfxgen/kfxlib/` (GPL v3, copyright John Howell et al.; see `kckfxgen/kfxlib/COPYING`).
+Convert **EPUB** files or **comic archives** (ZIP / CBZ / RAR / CBR) to Kindle fixed-layout comic **KFX** **without Kindle Previewer**.
 
 Compared with MOBI-based comics, KFX comics usually **turn pages and load faster** with large, high-resolution artwork, and are **less likely to freeze** the device. Fixed layout keeps **pages tidy** (e.g. centered, fewer stray margins). When building the KDF, each page gets an **`orientation`** field (**portrait** / **landscape**) from the image dimensions **after applying EXIF orientation**, and book metadata declares support for **both** portrait and landscape so mixed vertical and horizontal pages behave correctly.
 
@@ -20,12 +20,15 @@ Each successful run writes one **`书名-作者.kfx`** (sanitized title–author
   - **RAR / CBR:** `rarfile` plus a working **UnRAR** backend (extraction fails otherwise)
 
 ```bash
-pip install amazon-ion lxml pillow
-# For --split-spreads:
-pip install numpy pillow
-# For .rar / .cbr:
-pip install rarfile
+pip install -r requirements.txt
+# Or minimal CLI-only (no numpy / rar): pip install amazon-ion lxml pillow
 ```
+
+## GUI packaging (Windows / macOS)
+
+- **Run locally:** `python gui.py` (tkinter).
+- **Build binaries:** PyInstaller cannot cross-compile; run `python scripts/build_gui.py` on **Windows** for `dist/kckfxgen-gui.exe` (one-file) and on **macOS** for `dist/kckfxgen-gui.app` (bundle). Optional `--zip` zips that artifact under `dist/`.
+- **CI:** Push a tag `v*` or use *Actions → Build GUI*; workflow `.github/workflows/build-gui.yml` builds both platforms and uploads zip artifacts.
 
 ## Supported inputs
 

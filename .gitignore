@@ -9,11 +9,25 @@ __pycache__/
 venv/
 env/
 
-# Packaging
+# Packaging / PyInstaller
 build/
 dist/
 *.egg-info/
 .eggs/
+*.egg
+pip-wheel-metadata/
+# 若本地用 pyi-makespec 生成但未入库的 spec，可避免误提交
+/gui.spec
+/kckfxgen-gui.spec
+
+# 测试与静态检查缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
 
 # IDE / OS
 .idea/
@@ -21,12 +35,23 @@ dist/
 *.swp
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 # Local outputs (可选：若需提交样例请自行从 .gitignore 中删除对应行)
 *.kpf
 *.kfx
 
+# KDF / 打包临时（崩溃残留等）
+.book_kdf_wip_*
+
+# 密钥与环境（勿提交）
+.env
+.env.*.local
+
 # Logs / temp
 *.log
 *.tmp
 ~$*
+tmp/
+temp/

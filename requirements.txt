@@ -1,0 +1,6 @@
+# kckfxgen 运行时依赖（CLI / GUI / 打包）
+amazon-ion
+lxml
+pillow
+numpy
+rarfile

@@ -1,0 +1,57 @@
+# 在 Windows 与 macOS 上分别调用 PyInstaller 打包 GUI（无法在单一 runner 上交叉编译另一系统）。
+name: Build GUI
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt "pyinstaller>=6.0"
+
+      - name: PyInstaller
+        run: python scripts/build_gui.py --skip-install
+
+      - name: Zip Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd dist
+          Compress-Archive -Path kckfxgen-gui.exe -DestinationPath kckfxgen-gui-windows.zip -Force
+
+      - name: Zip macOS artifact
+        if: runner.os == 'macOS'
+        run: |
+          cd dist && zip -r -y kckfxgen-gui-macos.zip kckfxgen-gui.app
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kckfxgen-gui-windows
+          path: dist/kckfxgen-gui-windows.zip
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kckfxgen-gui-macos
+          path: dist/kckfxgen-gui-macos.zip

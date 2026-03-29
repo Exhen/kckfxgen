@@ -4,7 +4,7 @@
 
 [English README](README.md)
 
-将 **EPUB** 或 **漫画压缩包**（ZIP / CBZ / RAR / CBR）转为 Kindle 固定版式漫画用的 **KFX**，**不再依赖 Kindle Previewer**。流程：生成本工具自己的 **`.kpf`**（内含 `book.kdf`），再用与 [calibre-kfx-output](https://github.com/dstaley/calibre-kfx-output) 中 [`kfx_container.py`](https://github.com/dstaley/calibre-kfx-output/blob/master/kfxlib/kfx_container.py) 相同的 **`KfxContainer.serialize`** 路径打成单文件 **`.kfx`**（`KpfContainer` 读库 → `KpfBook` 修正 → 序列化）。对应实现已直接纳入仓库目录 **`kckfxgen/kfxlib/`**（GPL v3，原作者 John Howell 等；许可证全文见 **`kckfxgen/kfxlib/COPYING`**）。
+将 **EPUB** 或 **漫画压缩包**（ZIP / CBZ / RAR / CBR）转为 Kindle 固定版式漫画用的 **KFX**，**不再依赖 Kindle Previewer**。
 
 与基于 MOBI 的漫画相比，KFX 漫画通常在大体积、高分辨率图源下**翻页与加载更快**，设备上**更不容易卡死**；固定版式下**版面更规整**，例如**居中对齐、减少多余白边**，阅读体验更丝滑。生成 KDF 时会按**每张图在应用 EXIF 方向后的宽高**写入 **`orientation`（portrait / landscape）**，并在图书元数据中声明同时支持竖屏与横屏，便于混排竖页、横页。
 
@@ -20,12 +20,15 @@
   - **RAR / CBR**：`rarfile`，且系统须能调用 **UnRAR**（否则解压会失败）
 
 ```bash
-pip install amazon-ion lxml pillow
-# 若使用 --split-spreads（与基础依赖相同）：
-pip install pillow
-# 若处理 .rar / .cbr：
-pip install rarfile
+pip install -r requirements.txt
+# 或仅最小 CLI：pip install amazon-ion lxml pillow
 ```
+
+## GUI 与打包（Windows / macOS）
+
+- **直接运行界面：** `python gui.py`（系统自带 tkinter）。
+- **打安装包：** PyInstaller 无法交叉编译；在 **Windows** 上运行 `python scripts/build_gui.py` 得到 `dist/kckfxgen-gui.exe`（单文件），在 **macOS** 上运行得到 `dist/kckfxgen-gui.app`。可加 `--zip` 在 `dist/` 下生成 zip 便于分发。
+- **CI：** 推送标签 `v*` 或在 Actions 里手动运行 **Build GUI**；工作流 `.github/workflows/build-gui.yml` 分别在两种系统上构建并上传 zip 制品。
 
 ## 支持的输入
 
