@@ -48,6 +48,8 @@ pip install rarfile
 | `-d` / `--debug` | DEBUG 日志 |
 | `--split-spreads` | 宽幅图（宽≥高×1.25）：仅当检出**空白装订中缝**时沿**几何正中**裁成两半并插入阅读顺序；否则保留整图（默认**关闭**） |
 | `--split-page-order` | 与 `--split-spreads` 配合：`right-left`（默认，先右半再左半）或 `left-right`（先左后右） |
+| `--rotate-landscape-90` | 写入 KDF 前将**横图**（宽 > 高）**逆时针旋转 90°** 以竖屏展示；竖图不变 |
+| `--page-progression` | KPF / KDF **翻页方向**：`ltr`（默认，从左向右）或 `rtl`（从右向左，日漫常见）。同步写入 `book.kcb` 的 `book_reading_direction` 与 `book.kdf` 中 `document_data` 的 `direction` |
 | `--title` | 覆盖**书名**（见下：漫画包默认识别；EPUB 则覆盖 OPF `dc:title`） |
 | `--author` | 覆盖**作者**（漫画包：文件名中「 - 」右侧；EPUB 覆盖 `dc:creator`） |
 | `--publisher` | 覆盖**出版社**（漫画包：文件名末尾 […] 或 (…) 内；EPUB 覆盖 `dc:publisher`） |
@@ -94,9 +96,16 @@ python main.py 路径/漫画.epub --split-spreads
 # 裁切后改为先左页再右页
 python main.py 路径/漫画.zip --split-spreads --split-page-order left-right
 
+# 从右向左翻页（日漫式；KCB + KDF 一致）
+python main.py 路径/漫画.cbz --page-progression rtl
+
 # 调试日志
 python main.py 路径/漫画.epub -d
 ```
+
+### Python API
+
+`kckfxgen.pipeline` 中的 `convert_to_kfx`、`epub_to_kpf`、`comic_archive_to_kpf`、`convert_epub_to_kfx` 可通过关键字参数 **`page_progression="ltr"`**（默认）或 **`page_progression="rtl"`** 控制相同行为。
 
 从**项目根目录**执行上述命令。
 

@@ -48,6 +48,8 @@ pip install rarfile
 | `-d` / `--debug` | DEBUG logging |
 | `--split-spreads` | Wide images (width ≥ height×1.25): split at the **horizontal centre** only if a **blank binding gutter** is detected; otherwise keep the full image (**off** by default) |
 | `--split-page-order` | With `--split-spreads`: `right-left` (default, right half then left) or `left-right` |
+| `--rotate-landscape-90` | Before writing KDF: rotate **landscape** pages (width > height) **90° counter‑clockwise** so they display as portrait; portrait pages unchanged |
+| `--page-progression` | KPF / KDF reading direction: `ltr` (default, left‑to‑right) or `rtl` (right‑to‑left, typical for manga). Sets `book.kcb` `book_reading_direction` and `book.kdf` `document_data.direction` |
 | `--title` | Override **title** (see below for comic archives; for EPUB overrides OPF `dc:title`) |
 | `--author` | Override **author** (comic archives: parsed from filename; EPUB overrides `dc:creator`) |
 | `--publisher` | Override **publisher** (comic archives: parsed from filename; EPUB overrides `dc:publisher`) |
@@ -94,9 +96,16 @@ python main.py path/to/comic.epub --split-spreads
 # After split, left page then right
 python main.py path/to/comic.zip --split-spreads --split-page-order left-right
 
+# Right-to-left page progression (manga-style; KCB + KDF)
+python main.py path/to/manga.cbz --page-progression rtl
+
 # Debug log
 python main.py path/to/comic.epub -d
 ```
+
+### Python API
+
+`kckfxgen.pipeline.convert_to_kfx`, `epub_to_kpf`, `comic_archive_to_kpf`, and `convert_epub_to_kfx` accept the same behaviour via **`page_progression="ltr"`** (default) or **`page_progression="rtl"`**.
 
 Run these from the **repository root**.
 

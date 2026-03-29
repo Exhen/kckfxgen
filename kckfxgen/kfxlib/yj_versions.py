@@ -755,6 +755,7 @@ KNOWN_KCB_DATA = {
             ],
         "book_reading_direction": [
             0,
+            1,
             2,
             ],
         "book_target_type": [

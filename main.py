@@ -87,6 +87,7 @@ def _convert_job(
     split_spreads: bool,
     split_page_order: Literal["right-left", "left-right"],
     rotate_landscape_90: bool,
+    page_progression: Literal["ltr", "rtl"],
     book_title: str | None,
     book_author: str | None,
     book_publisher: str | None,
@@ -98,6 +99,7 @@ def _convert_job(
             split_spreads=split_spreads,
             split_page_order=split_page_order,
             rotate_landscape_90=rotate_landscape_90,
+            page_progression=page_progression,
             book_title=book_title,
             book_author=book_author,
             book_publisher=book_publisher,
@@ -182,6 +184,13 @@ def main() -> None:
         help="将宽>高的横幅页在写入 KDF 前逆时针旋转 90°，以竖屏展示（竖图不变）",
     )
     parser.add_argument(
+        "--page-progression",
+        choices=("ltr", "rtl"),
+        default="ltr",
+        dest="page_progression",
+        help="KPF/KDF 翻页方向：ltr=从左向右（默认），rtl=从右向左（日漫常见）",
+    )
+    parser.add_argument(
         "--title",
         default=None,
         metavar="STR",
@@ -251,6 +260,7 @@ def main() -> None:
                 split_spreads=args.split_spreads,
                 split_page_order=args.split_page_order,
                 rotate_landscape_90=args.rotate_landscape_90,
+                page_progression=args.page_progression,
                 book_title=args.title,
                 book_author=args.author,
                 book_publisher=args.publisher,
@@ -276,6 +286,7 @@ def main() -> None:
                 split_spreads=args.split_spreads,
                 split_page_order=args.split_page_order,
                 rotate_landscape_90=args.rotate_landscape_90,
+                page_progression=args.page_progression,
                 book_title=args.title,
                 book_author=args.author,
                 book_publisher=args.publisher,

@@ -13,6 +13,8 @@ import string
 import tempfile
 import time
 from pathlib import Path
+from typing import Literal
+
 from amazon.ion import simpleion
 from amazon.ion.core import IonType
 from amazon.ion.simple_types import IonPyDict, IonPyText
@@ -186,6 +188,7 @@ class ImageKdfWriter:
         *,
         cover_from_first_portrait: bool = False,
         rotate_landscape_90: bool = False,
+        page_progression: Literal["ltr", "rtl"] = "ltr",
     ) -> None:
         self.res_dir = db_path.parent / "res"
         cover_idx = (
@@ -196,13 +199,14 @@ class ImageKdfWriter:
             else 0
         )
         logger.debug(
-            "[kdf] 初始化 KDF: db=%s res_dir=%s 图片数=%d cover_idx=%d portrait=%s rotate_landscape_90=%s",
+            "[kdf] 初始化 KDF: db=%s res_dir=%s 图片数=%d cover_idx=%d portrait=%s rotate_landscape_90=%s page_progression=%s",
             db_path,
             self.res_dir,
             len(image_paths),
             cover_idx,
             cover_from_first_portrait,
             rotate_landscape_90,
+            page_progression,
         )
         self.res_dir.mkdir(exist_ok=True)
         db_path = db_path.resolve()
@@ -249,7 +253,11 @@ class ImageKdfWriter:
                 logger.debug("[kdf] 写入 book_metadata 与 content_features")
                 self._insert_book_metadata(first_cover_res)
                 logger.debug("[kdf] 写入 document_data / metadata（阅读顺序与 sections）")
-                self._create_document_data(section_ids, cover_res_id=first_cover_res)
+                self._create_document_data(
+                    section_ids,
+                    cover_res_id=first_cover_res,
+                    page_progression=page_progression,
+                )
                 logger.debug("[kdf] 写入 yj.section_pid_count_map")
                 self._create_section_pid_count_map(all_structure_ids)
                 self.conn.commit()
@@ -557,11 +565,16 @@ class ImageKdfWriter:
         return section_id, spm_list, res_id
 
     def _create_document_data(
-        self, section_ids: list[str], *, cover_res_id: str
+        self,
+        section_ids: list[str],
+        *,
+        cover_res_id: str,
+        page_progression: Literal["ltr", "rtl"],
     ) -> None:
         section_ion_str = ",".join(f'kfx_id::"{s}"' for s in section_ids)
+        dir_ion = "rtl" if page_progression == "rtl" else "ltr"
         document_data_ion = f"""{{
- direction: ltr,
+ direction: {dir_ion},
  writing_mode: horizontal_tb,
  column_count: auto,
  selection: enabled,

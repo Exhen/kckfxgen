@@ -93,23 +93,35 @@ def _kfx_basename_title_author(
 
 
 # 与 Kindle Create 漫画工程一致（参见 book_state，固定版式 + 漫画输入/目标类型）
-_COMIC_BOOK_STATE = {
+# book_reading_direction：0/2 与 kfxlib KNOWN_KCB_DATA 一致；与 page_progression 联动（ltr→0，rtl→2）
+_COMIC_BOOK_STATE_BASE = {
     "book_fl_type": 1,
     "book_input_type": 4,
-    "book_reading_direction": 1,
     "book_reading_option": 1,
     "book_target_type": 3,
     "book_virtual_panelmovement": 0,
 }
 
 
-def _write_kcb(kpf_dir: Path) -> None:
+def _kcb_book_reading_direction(
+    page_progression: Literal["ltr", "rtl"],
+) -> int:
+    return 2 if page_progression == "rtl" else 0
+
+
+def _comic_book_state(page_progression: Literal["ltr", "rtl"]) -> dict[str, int]:
+    state = dict(_COMIC_BOOK_STATE_BASE)
+    state["book_reading_direction"] = _kcb_book_reading_direction(page_progression)
+    return state
+
+
+def _write_kcb(kpf_dir: Path, *, page_progression: Literal["ltr", "rtl"]) -> None:
     kcb_path = kpf_dir / "book.kcb"
     logger.debug("写入 book.kcb: %s", kcb_path)
     with kcb_path.open("w", encoding="utf-8") as f:
         json.dump(
             {
-                "book_state": _COMIC_BOOK_STATE,
+                "book_state": _comic_book_state(page_progression),
                 "content_hash": None,
                 "metadata": {
                     "book_path": "resources",
@@ -151,6 +163,7 @@ def _images_to_kpf_zip(
     split_page_order: Literal["right-left", "left-right"],
     portrait_cover: bool = False,
     rotate_landscape_90: bool = False,
+    page_progression: Literal["ltr", "rtl"] = "ltr",
 ) -> None:
     """在已存在的 ``tmp_path`` 工作目录内生成 KPF 目录树并打包为 ``dest``（.kpf ZIP）。
 
@@ -189,8 +202,9 @@ def _images_to_kpf_zip(
         images,
         cover_from_first_portrait=portrait_cover,
         rotate_landscape_90=rotate_landscape_90,
+        page_progression=page_progression,
     )
-    _write_kcb(kpf_dir)
+    _write_kcb(kpf_dir, page_progression=page_progression)
     _write_manifest(resources)
 
     archive_stem = tmp_path / "out"
@@ -211,6 +225,7 @@ def epub_to_kpf(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    page_progression: Literal["ltr", "rtl"] = "ltr",
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -266,6 +281,7 @@ def epub_to_kpf(
             split_spreads=split_spreads,
             split_page_order=split_page_order,
             rotate_landscape_90=rotate_landscape_90,
+            page_progression=page_progression,
         )
 
     logger.debug("环节: 临时目录已清理，流程结束")
@@ -279,6 +295,7 @@ def comic_archive_to_kpf(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    page_progression: Literal["ltr", "rtl"] = "ltr",
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -333,6 +350,7 @@ def comic_archive_to_kpf(
             split_page_order=split_page_order,
             portrait_cover=True,
             rotate_landscape_90=rotate_landscape_90,
+            page_progression=page_progression,
         )
 
     logger.debug("环节: 漫画包临时目录已清理")
@@ -346,6 +364,7 @@ def convert_to_kfx(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    page_progression: Literal["ltr", "rtl"] = "ltr",
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -376,6 +395,7 @@ def convert_to_kfx(
                 split_spreads=split_spreads,
                 split_page_order=split_page_order,
                 rotate_landscape_90=rotate_landscape_90,
+                page_progression=page_progression,
                 book_title=book_title,
                 book_author=book_author,
                 book_publisher=book_publisher,
@@ -387,6 +407,7 @@ def convert_to_kfx(
                 split_spreads=split_spreads,
                 split_page_order=split_page_order,
                 rotate_landscape_90=rotate_landscape_90,
+                page_progression=page_progression,
                 book_title=book_title,
                 book_author=book_author,
                 book_publisher=book_publisher,
@@ -423,6 +444,7 @@ def convert_epub_to_kfx(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    page_progression: Literal["ltr", "rtl"] = "ltr",
     book_title: str | None = None,
     book_author: str | None = None,
     book_publisher: str | None = None,
@@ -434,6 +456,7 @@ def convert_epub_to_kfx(
         split_spreads=split_spreads,
         split_page_order=split_page_order,
         rotate_landscape_90=rotate_landscape_90,
+        page_progression=page_progression,
         book_title=book_title,
         book_author=book_author,
         book_publisher=book_publisher,
