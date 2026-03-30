@@ -32,6 +32,31 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 
 
+def _require_tkinter_or_exit() -> None:
+    """GUI 依赖 tkinter / ``_tkinter``。构建所用 Python 若未编入 Tcl/Tk，PyInstaller 会排除 Tk，
+
+    产物启动时在 ``import tkinter`` 即失败（--windowed 下无终端 → 表现为闪退）。
+    在调用 PyInstaller 前失败并给出说明，避免打出坏包。
+    """
+    try:
+        import _tkinter  # noqa: F401
+    except ImportError:
+        print(
+            "错误: 当前 Python 无法加载 _tkinter（未包含 Tcl/Tk），无法打包 tkinter GUI。\n"
+            "\n"
+            "常见情况:\n"
+            "  • macOS 上 pyenv/Homebrew Python 若编译时未链到 tcl-tk，会出现此问题。\n"
+            "  • 处理: 使用带 Tcl/Tk 的解释器再执行本脚本，例如:\n"
+            "      - 自 https://www.python.org/downloads/ 安装的官方 macOS 包；或\n"
+            "      - brew install python-tk@3.12（或当前主版本），并用该 python 运行打包；或\n"
+            "      - pyenv 前先 brew install tcl-tk，并令 Python 配置能找到 Tk 头文件与库。\n"
+            "\n"
+            "验证: python3 -c \"import tkinter; tkinter.Tk().destroy()\"",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
 def _pip_install() -> None:
     subprocess.run(
         [
@@ -161,6 +186,8 @@ def main() -> None:
     if not (_ROOT / "gui.py").is_file():
         print(f"找不到 gui.py：{_ROOT}", file=sys.stderr)
         sys.exit(1)
+
+    _require_tkinter_or_exit()
 
     if not args.skip_install:
         _pip_install()
