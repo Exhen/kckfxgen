@@ -98,6 +98,8 @@ def _pyinstaller_cmd() -> list[str]:
         "kckfxgen-gui",
         "--paths",
         str(_ROOT),
+        "--runtime-hook",
+        str(_ROOT / "scripts" / "pyi_runtime_hook.py"),
         str(_ROOT / "gui.py"),
         "--hidden-import",
         "main",
@@ -111,6 +113,16 @@ def _pyinstaller_cmd() -> list[str]:
         "amazon.ion.simpleion",
         "--hidden-import",
         "lxml.etree",
+        "--hidden-import",
+        "lxml.html.soupparser",
+        "--collect-submodules",
+        "PIL",
+        "--collect-data",
+        "PIL",
+        "--collect-data",
+        "lxml",
+        "--collect-data",
+        "amazon.ion",
         # macOS / 部分环境：未打入 Tcl/Tk 时 tkinter 初始化即崩溃（窗口应用无控制台）
         "--collect-all",
         "tkinter",
@@ -185,6 +197,9 @@ def main() -> None:
 
     if not (_ROOT / "gui.py").is_file():
         print(f"找不到 gui.py：{_ROOT}", file=sys.stderr)
+        sys.exit(1)
+    if not (_ROOT / "scripts" / "pyi_runtime_hook.py").is_file():
+        print(f"找不到 runtime hook：{_ROOT / 'scripts' / 'pyi_runtime_hook.py'}", file=sys.stderr)
         sys.exit(1)
 
     _require_tkinter_or_exit()

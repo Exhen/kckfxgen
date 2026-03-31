@@ -23,7 +23,9 @@ NAMESPACES = {
 
 
 def _local(tag: str | None) -> str:
-    if not tag:
+    # lxml 在遍历注释/PI 等非普通元素时，el.tag 可能不是字符串
+    # （例如 _cython_*.cython_function_or_method），此时应直接忽略。
+    if not tag or not isinstance(tag, str):
         return ""
     return tag.split("}", 1)[-1]
 
