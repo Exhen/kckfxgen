@@ -189,6 +189,7 @@ def _images_to_kpf_zip(
     split_page_order: Literal["right-left", "left-right"],
     portrait_cover: bool = False,
     rotate_landscape_90: bool = False,
+    erase_colorsoft_rainbow: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
     layout_view: Literal["fixed", "virtual"] = "fixed",
     virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
@@ -197,6 +198,7 @@ def _images_to_kpf_zip(
 
     ``portrait_cover=True``（漫画压缩包）时，``kindle_title_metadata.cover_image`` 指向首张竖屏图对应资源，阅读顺序不变。
     ``rotate_landscape_90=True`` 时，宽>高 的页在写入 KDF 前逆时针旋转 90°，以竖屏展示。
+    ``erase_colorsoft_rainbow=True`` 时在写入 KDF 前对每页 JPEG/PNG 做频域滤波，削弱 Colorsoft 等设备上的彩虹摩尔纹（需 numpy，且会重编码）。
     ``layout_view=virtual`` 时生成与 Kindle Create 虚拟面板相近的 KDF（``virtual_panel: enabled``、yj.authoring 链等）。
     """
     if split_spreads:
@@ -231,6 +233,7 @@ def _images_to_kpf_zip(
         images,
         cover_from_first_portrait=portrait_cover,
         rotate_landscape_90=rotate_landscape_90,
+        erase_colorsoft_rainbow=erase_colorsoft_rainbow,
         page_progression=page_progression,
         layout_view=layout_view,
         virtual_panel_axis=virtual_panel_axis,
@@ -261,6 +264,7 @@ def epub_to_kpf(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    erase_colorsoft_rainbow: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
     layout_view: Literal["fixed", "virtual"] = "fixed",
     virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
@@ -319,6 +323,7 @@ def epub_to_kpf(
             split_spreads=split_spreads,
             split_page_order=split_page_order,
             rotate_landscape_90=rotate_landscape_90,
+            erase_colorsoft_rainbow=erase_colorsoft_rainbow,
             page_progression=page_progression,
             layout_view=layout_view,
             virtual_panel_axis=virtual_panel_axis,
@@ -335,6 +340,7 @@ def comic_archive_to_kpf(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    erase_colorsoft_rainbow: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
     layout_view: Literal["fixed", "virtual"] = "fixed",
     virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
@@ -392,6 +398,7 @@ def comic_archive_to_kpf(
             split_page_order=split_page_order,
             portrait_cover=True,
             rotate_landscape_90=rotate_landscape_90,
+            erase_colorsoft_rainbow=erase_colorsoft_rainbow,
             page_progression=page_progression,
             layout_view=layout_view,
             virtual_panel_axis=virtual_panel_axis,
@@ -408,6 +415,7 @@ def convert_to_kfx(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    erase_colorsoft_rainbow: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
     layout_view: Literal["fixed", "virtual"] = "fixed",
     virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
@@ -442,6 +450,7 @@ def convert_to_kfx(
                 split_spreads=split_spreads,
                 split_page_order=split_page_order,
                 rotate_landscape_90=rotate_landscape_90,
+                erase_colorsoft_rainbow=erase_colorsoft_rainbow,
                 page_progression=page_progression,
                 layout_view=layout_view,
                 virtual_panel_axis=virtual_panel_axis,
@@ -456,6 +465,7 @@ def convert_to_kfx(
                 split_spreads=split_spreads,
                 split_page_order=split_page_order,
                 rotate_landscape_90=rotate_landscape_90,
+                erase_colorsoft_rainbow=erase_colorsoft_rainbow,
                 page_progression=page_progression,
                 layout_view=layout_view,
                 virtual_panel_axis=virtual_panel_axis,
@@ -499,6 +509,7 @@ def convert_epub_to_kfx(
     split_spreads: bool = False,
     split_page_order: Literal["right-left", "left-right"] = "right-left",
     rotate_landscape_90: bool = False,
+    erase_colorsoft_rainbow: bool = False,
     page_progression: Literal["ltr", "rtl"] = "ltr",
     layout_view: Literal["fixed", "virtual"] = "fixed",
     virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
@@ -514,6 +525,7 @@ def convert_epub_to_kfx(
         split_spreads=split_spreads,
         split_page_order=split_page_order,
         rotate_landscape_90=rotate_landscape_90,
+        erase_colorsoft_rainbow=erase_colorsoft_rainbow,
         page_progression=page_progression,
         layout_view=layout_view,
         virtual_panel_axis=virtual_panel_axis,

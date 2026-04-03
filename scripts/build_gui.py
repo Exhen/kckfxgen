@@ -117,6 +117,8 @@ def _pyinstaller_cmd() -> list[str]:
         "lxml.html.soupparser",
         "--collect-submodules",
         "PIL",
+        "--collect-submodules",
+        "numpy",
         "--collect-data",
         "PIL",
         "--collect-data",

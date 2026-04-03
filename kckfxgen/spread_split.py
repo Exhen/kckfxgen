@@ -6,9 +6,7 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
@@ -207,11 +205,6 @@ def spread_should_split(gray: np.ndarray) -> bool:
     return split_decision(gray)[0]
 
 
-def _default_max_workers(n_tasks: int) -> int:
-    cpu = os.cpu_count() or 4
-    return max(1, min(n_tasks, min(8, cpu * 2)))
-
-
 def _save_split_page(im: Image.Image, path: Path) -> None:
     ext = path.suffix.lower()
     if ext in (".jpg", ".jpeg"):
@@ -285,14 +278,13 @@ def expand_spread_pages(
     out_dir: Path,
     *,
     page_order: SplitPageOrder = "right-left",
-    max_workers: int | None = None,
 ) -> list[Path]:
     """
     对 **宽 ≥ 高×1.25** 的图：当 **空白正中胶缝**、或 **宽度 35%–65% 窗口内** 检出明显半页分界
     （且缝距几何中心 ≤6% 宽、缝两侧条带相关足够低）、或 **原单列/半页带不连续** 判据成立时，
     沿检出的竖线（多为正中，数码拼页可为略偏轴）切成两页；否则整图复制。非宽幅图始终整图复制。
 
-    多图时在线程池内并行处理。需 **numpy**、**Pillow**。
+    多图时 **顺序** 处理（曾用线程池并行，Windows 上易与 NumPy/BLAS 冲突闪退）。需 **numpy**、**Pillow**。
     """
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -301,15 +293,7 @@ def expand_spread_pages(
     if n == 0:
         return []
 
-    workers = max_workers if max_workers is not None else _default_max_workers(n)
-    workers = max(1, min(workers, n))
-
     args = [(i, src, out_dir, pad, page_order) for i, src in enumerate(images)]
-
-    if workers <= 1:
-        nested = [_process_one_spread(*a) for a in args]
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            nested = list(ex.map(lambda a: _process_one_spread(*a), args))
+    nested = [_process_one_spread(*a) for a in args]
 
     return [p for group in nested for p in group]

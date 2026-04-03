@@ -37,10 +37,12 @@ _ROOT = _resolve_bundle_root()
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+import kckfxgen.blas_thread_env  # noqa: F401  # 须在首次 import numpy 之前限制 BLAS 线程
+
 import logging
 import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tkinter import filedialog, messagebox
 import tkinter as tk
 import tkinter.font as tkfont
@@ -48,6 +50,7 @@ from tkinter import ttk
 from typing import Any, Literal
 
 from kckfxgen.cli_log import configure_logging
+from kckfxgen.mp_worker import build_convert_payload, convert_job_payload
 
 import main as kck_main
 
@@ -131,6 +134,7 @@ def _run_conversion(
     split_spreads: bool,
     split_page_order: Literal["right-left", "left-right"],
     rotate_landscape_90: bool,
+    erase_colorsoft_rainbow: bool,
     page_progression: Literal["ltr", "rtl"],
     layout_view: Literal["fixed", "virtual"],
     virtual_panel_axis: Literal["vertical", "horizontal"],
@@ -182,6 +186,7 @@ def _run_conversion(
                 split_spreads=split_spreads,
                 split_page_order=split_page_order,
                 rotate_landscape_90=rotate_landscape_90,
+                erase_colorsoft_rainbow=erase_colorsoft_rainbow,
                 page_progression=page_progression,
                 layout_view=layout_view,
                 virtual_panel_axis=virtual_panel_axis,
@@ -197,15 +202,16 @@ def _run_conversion(
         else:
             j = max(1, jobs)
             failed: list[tuple[Path, BaseException]] = []
-            with ThreadPoolExecutor(max_workers=j) as ex:
-                futs = {
-                    ex.submit(
-                        kck_main._convert_job,
+            with ProcessPoolExecutor(max_workers=j) as ex:
+                futs = {}
+                for src, kdir in zip(inputs, planned):
+                    payload = build_convert_payload(
                         src,
                         kdir,
                         split_spreads=split_spreads,
                         split_page_order=split_page_order,
                         rotate_landscape_90=rotate_landscape_90,
+                        erase_colorsoft_rainbow=erase_colorsoft_rainbow,
                         page_progression=page_progression,
                         layout_view=layout_view,
                         virtual_panel_axis=virtual_panel_axis,
@@ -213,14 +219,14 @@ def _run_conversion(
                         book_title=book_title,
                         book_author=book_author,
                         book_publisher=book_publisher,
-                    ): src
-                    for src, kdir in zip(inputs, planned)
-                }
+                    )
+                    futs[ex.submit(convert_job_payload, payload)] = src
                 for fut in as_completed(futs):
-                    src, err = fut.result()
-                    if err is not None:
-                        log.error("失败 %s: %s", src, err)
-                        failed.append((src, err))
+                    _src_s, err_s = fut.result()
+                    if err_s is not None:
+                        src_p = futs[fut]
+                        log.error("失败 %s: %s", src_p, err_s)
+                        failed.append((src_p, RuntimeError(err_s)))
             if not failed:
                 ok = True
                 log.info("全部完成 · %d 个文件", n, extra={"cli_style": "success"})
@@ -256,6 +262,7 @@ class KckfxgenGui:
         self.var_publisher = tk.StringVar()
         self.var_split = tk.BooleanVar(value=False)
         self.var_rotate = tk.BooleanVar(value=False)
+        self.var_colorsoft_rainbow = tk.BooleanVar(value=False)
         self.var_keep_kpf = tk.BooleanVar(value=False)
         self.var_debug = tk.BooleanVar(value=False)
         self.var_page_prog = tk.StringVar(value="ltr")
@@ -341,17 +348,22 @@ class KckfxgenGui:
         ttk.Checkbutton(chk_wrap, text="横图逆时针旋转 90°", variable=self.var_rotate).grid(
             row=0, column=1, sticky="w", padx=(0, 8), pady=gy
         )
+        ttk.Checkbutton(
+            chk_wrap,
+            text="削弱 Colorsoft 彩虹纹（频域滤波，需 numpy，较慢）",
+            variable=self.var_colorsoft_rainbow,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=(0, 8), pady=gy)
         ttk.Checkbutton(chk_wrap, text="保留中间 .kpf", variable=self.var_keep_kpf).grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=gy
+            row=2, column=0, sticky="w", padx=(0, 8), pady=gy
         )
         ttk.Checkbutton(chk_wrap, text="详细日志 (DEBUG)", variable=self.var_debug).grid(
-            row=1, column=1, sticky="w", padx=(0, 8), pady=gy
+            row=2, column=1, sticky="w", padx=(0, 8), pady=gy
         )
 
-        ttk.Separator(lf_opt, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky="ew", pady=(8, 10))
+        ttk.Separator(lf_opt, orient=tk.HORIZONTAL).grid(row=3, column=0, sticky="ew", pady=(8, 10))
 
         adv = ttk.Frame(lf_opt)
-        adv.grid(row=2, column=0, sticky="ew")
+        adv.grid(row=4, column=0, sticky="ew")
         adv.columnconfigure(0, minsize=120, weight=0)
         adv.columnconfigure(1, weight=1)
 
@@ -498,7 +510,7 @@ class KckfxgenGui:
             return
 
         try:
-            kck_main.resolve_input_list(inp)
+            batch_n = len(kck_main.resolve_input_list(inp))
         except (OSError, ValueError) as e:
             messagebox.showerror("错误", str(e))
             return
@@ -540,6 +552,7 @@ class KckfxgenGui:
             "split_spreads": self.var_split.get(),
             "split_page_order": self.var_split_order.get(),  # type: ignore[arg-type]
             "rotate_landscape_90": self.var_rotate.get(),
+            "erase_colorsoft_rainbow": self.var_colorsoft_rainbow.get(),
             "page_progression": self.var_page_prog.get(),  # type: ignore[arg-type]
             "layout_view": self.var_layout.get(),  # type: ignore[arg-type]
             "virtual_panel_axis": self.var_vaxis.get(),  # type: ignore[arg-type]
@@ -553,7 +566,11 @@ class KckfxgenGui:
             "on_done": lambda o, m: self.root.after(0, lambda: done(o, m)),
         }
 
-        threading.Thread(target=lambda: _run_conversion(**kw), daemon=True).start()
+        # 多文件用进程池时，工作线程不能为 daemon（否则 Windows 上无法 spawn 子进程）
+        threading.Thread(
+            target=lambda: _run_conversion(**kw),
+            daemon=(batch_n == 1),
+        ).start()
 
     def run(self) -> None:
         self.root.mainloop()

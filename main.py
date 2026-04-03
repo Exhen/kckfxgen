@@ -9,12 +9,14 @@ import logging
 import os
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Literal
 
+import kckfxgen.blas_thread_env  # noqa: F401  # 须在首次 import numpy 之前限制 BLAS 线程
 from kckfxgen.cli_log import configure_logging, print_run_header
 from kckfxgen.archive_comic import COMIC_ARCHIVE_SUFFIXES
+from kckfxgen.mp_worker import build_convert_payload, convert_job_payload
 from kckfxgen.pipeline import convert_to_kfx
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,7 @@ def _convert_job(
     split_spreads: bool,
     split_page_order: Literal["right-left", "left-right"],
     rotate_landscape_90: bool,
+    erase_colorsoft_rainbow: bool,
     page_progression: Literal["ltr", "rtl"],
     layout_view: Literal["fixed", "virtual"],
     virtual_panel_axis: Literal["vertical", "horizontal"],
@@ -102,6 +105,7 @@ def _convert_job(
             split_spreads=split_spreads,
             split_page_order=split_page_order,
             rotate_landscape_90=rotate_landscape_90,
+            erase_colorsoft_rainbow=erase_colorsoft_rainbow,
             page_progression=page_progression,
             layout_view=layout_view,
             virtual_panel_axis=virtual_panel_axis,
@@ -165,7 +169,7 @@ def main() -> None:
         type=int,
         default=max(1, min(2, os.cpu_count() or 4)),
         metavar="N",
-        help="并发线程数（默认: min(8, CPU 核心数)）",
+        help="多文件并行时的进程数（每本书独立进程，避免 NumPy 多线程崩溃；默认: min(2, CPU)）",
     )
     parser.add_argument(
         "-d",
@@ -188,6 +192,14 @@ def main() -> None:
         "--rotate-landscape-90",
         action="store_true",
         help="将宽>高的横幅页在写入 KDF 前逆时针旋转 90°，以竖屏展示（竖图不变）",
+    )
+    parser.add_argument(
+        "--erase-colorsoft-rainbow",
+        action="store_true",
+        help=(
+            "削弱 Kindle Colorsoft 等设备上的彩虹摩尔纹：对每页 JPEG/PNG 做频域定向衰减"
+            "（算法来自 KCC rainbow_artifacts_eraser；需 numpy，会重编码，耗时显著增加）"
+        ),
     )
     parser.add_argument(
         "--page-progression",
@@ -289,6 +301,7 @@ def main() -> None:
                 split_spreads=args.split_spreads,
                 split_page_order=args.split_page_order,
                 rotate_landscape_90=args.rotate_landscape_90,
+                erase_colorsoft_rainbow=args.erase_colorsoft_rainbow,
                 page_progression=args.page_progression,
                 layout_view=args.layout_view,
                 virtual_panel_axis=args.virtual_panel_axis,
@@ -308,16 +321,18 @@ def main() -> None:
     jobs = max(1, args.jobs)
     failed: list[tuple[Path, BaseException]] = []
     interrupted = False
-    ex = ThreadPoolExecutor(max_workers=jobs)
+    # 多文件用进程池：避免 Windows 上多线程 + NumPy/BLAS 原生闪退（线程池隔离不足）
+    ex = ProcessPoolExecutor(max_workers=jobs)
     try:
-        futs = {
-            ex.submit(
-                _convert_job,
+        futs = {}
+        for src, kdir in zip(inputs, planned):
+            payload = build_convert_payload(
                 src,
                 kdir,
                 split_spreads=args.split_spreads,
                 split_page_order=args.split_page_order,
                 rotate_landscape_90=args.rotate_landscape_90,
+                erase_colorsoft_rainbow=args.erase_colorsoft_rainbow,
                 page_progression=args.page_progression,
                 layout_view=args.layout_view,
                 virtual_panel_axis=args.virtual_panel_axis,
@@ -325,20 +340,20 @@ def main() -> None:
                 book_title=args.title,
                 book_author=args.author,
                 book_publisher=args.publisher,
-            ): src
-            for src, kdir in zip(inputs, planned)
-        }
+            )
+            futs[ex.submit(convert_job_payload, payload)] = src
         for fut in as_completed(futs):
             try:
-                src, err = fut.result()
+                src_str, err_s = fut.result()
             except KeyboardInterrupt:
                 interrupted = True
                 logger.warning("已中断（Ctrl+C 或终止信号），正在取消未完成任务…")
                 ex.shutdown(wait=False, cancel_futures=True)
                 break
-            if err is not None:
-                logger.error("失败 %s: %s", src, err)
-                failed.append((src, err))
+            if err_s is not None:
+                src = futs[fut]
+                logger.error("失败 %s: %s", src, err_s)
+                failed.append((src, RuntimeError(err_s)))
     except KeyboardInterrupt:
         interrupted = True
         logger.warning("已中断（Ctrl+C 或终止信号），正在取消未完成任务…")
@@ -357,6 +372,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    try:
+        import multiprocessing
+
+        multiprocessing.freeze_support()
+    except ImportError:
+        pass
     try:
         main()
     except KeyboardInterrupt:

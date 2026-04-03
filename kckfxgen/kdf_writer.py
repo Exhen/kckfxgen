@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 TOOL_NAME = "kckfxgen"
 TOOL_VERSION = "0.1.0"
 
+# 旋转、彩虹纹削弱等路径下 JPEG 必须重编码时使用（Pillow quality 约等于「百分比」；80 兼顾体积与观感）
+JPEG_REENCODE_QUALITY = 80
+
 # sqlite_master.sql 须与 kfxlib 的 kpf_container.py 中单行 DDL 完全一致（Calibre KFX Output 用 set 成员比对）
 _KDF_SCHEMA_SQL = (
     "CREATE TABLE capabilities(key char(20), version smallint, primary key (key, version)) without rowid;\n"
@@ -156,11 +159,55 @@ def _encode_rotated_raster(raw: bytes, ion_fmt: str) -> tuple[bytes, int, int]:
     buf = io.BytesIO()
     if ion_fmt == "jpg":
         _rgb_for_jpeg(rotated).save(
-            buf, format="JPEG", quality=95, optimize=False
+            buf, format="JPEG", quality=JPEG_REENCODE_QUALITY, optimize=False
         )
     else:
         rotated.save(buf, format="PNG", compress_level=3)
     return buf.getvalue(), w, h
+
+
+def _apply_colorsoft_rainbow_erase_bytes(raw: bytes, ion_fmt: str) -> tuple[bytes, int, int]:
+    """对 JPEG/PNG 字节流做 Colorsoft 彩虹纹削弱（频域滤波），并重编码为同格式。"""
+    from .rainbow_artifacts_eraser import erase_rainbow_artifacts
+
+    with Image.open(io.BytesIO(raw)) as im:
+        im.load()
+        is_color = im.mode in ("RGB", "RGBA")
+        cleaned = erase_rainbow_artifacts(im, is_color)
+    w, h = cleaned.size
+    buf = io.BytesIO()
+    if ion_fmt == "jpg":
+        _rgb_for_jpeg(cleaned).save(
+            buf, format="JPEG", quality=JPEG_REENCODE_QUALITY, optimize=False
+        )
+    elif ion_fmt == "png":
+        cleaned.save(buf, format="PNG", compress_level=3)
+    else:
+        raise ValueError(f"彩虹纹削弱仅支持 jpg/png 重编码，当前: {ion_fmt!r}")
+    return buf.getvalue(), w, h
+
+
+def _load_page_raster_for_kdf(
+    image_path: Path,
+    *,
+    rotate_landscape_90: bool,
+    erase_colorsoft_rainbow: bool,
+) -> tuple[bytes, str, int, int]:
+    image_bytes, ion_fmt, im_width, im_height = _read_raster_passthrough(image_path)
+    if erase_colorsoft_rainbow:
+        logger.debug("[kdf] Colorsoft 彩虹纹削弱: %s", image_path.name)
+        image_bytes, im_width, im_height = _apply_colorsoft_rainbow_erase_bytes(
+            image_bytes, ion_fmt
+        )
+    if rotate_landscape_90 and im_width > im_height:
+        image_bytes, im_width, im_height = _encode_rotated_raster(image_bytes, ion_fmt)
+        logger.debug(
+            "[kdf] 横幅旋转 90°（逆时针）: %s -> %dx%d",
+            image_path.name,
+            im_width,
+            im_height,
+        )
+    return image_bytes, ion_fmt, im_width, im_height
 
 
 class ImageKdfWriter:
@@ -188,6 +235,7 @@ class ImageKdfWriter:
         *,
         cover_from_first_portrait: bool = False,
         rotate_landscape_90: bool = False,
+        erase_colorsoft_rainbow: bool = False,
         page_progression: Literal["ltr", "rtl"] = "ltr",
         layout_view: Literal["fixed", "virtual"] = "fixed",
         virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
@@ -201,13 +249,14 @@ class ImageKdfWriter:
             else 0
         )
         logger.debug(
-            "[kdf] 初始化 KDF: db=%s res_dir=%s 图片数=%d cover_idx=%d portrait=%s rotate_landscape_90=%s page_progression=%s layout_view=%s virtual_panel_axis=%s",
+            "[kdf] 初始化 KDF: db=%s res_dir=%s 图片数=%d cover_idx=%d portrait=%s rotate_landscape_90=%s erase_colorsoft_rainbow=%s page_progression=%s layout_view=%s virtual_panel_axis=%s",
             db_path,
             self.res_dir,
             len(image_paths),
             cover_idx,
             cover_from_first_portrait,
             rotate_landscape_90,
+            erase_colorsoft_rainbow,
             page_progression,
             layout_view,
             virtual_panel_axis,
@@ -251,6 +300,7 @@ class ImageKdfWriter:
                             self._add_virtual_panel_image_section(
                                 img_path,
                                 rotate_landscape_90=rotate_landscape_90,
+                                erase_colorsoft_rainbow=erase_colorsoft_rainbow,
                                 virtual_panel_axis=virtual_panel_axis,
                             )
                         )
@@ -259,6 +309,7 @@ class ImageKdfWriter:
                         section_id, spm_list, res_id = self._add_fixed_image_section(
                             img_path,
                             rotate_landscape_90=rotate_landscape_90,
+                            erase_colorsoft_rainbow=erase_colorsoft_rainbow,
                         )
                     section_ids.append(section_id)
                     all_structure_ids[section_id] = spm_list
@@ -503,23 +554,16 @@ class ImageKdfWriter:
         image_path: Path,
         *,
         rotate_landscape_90: bool = False,
+        erase_colorsoft_rainbow: bool = False,
         virtual_panel_axis: Literal["vertical", "horizontal"] = "vertical",
     ) -> tuple[str, list[tuple[str, int]], str, str]:
         """虚拟视图（对齐 Kindle Create）：页模板 ``virtual_panel: enabled``、SPM 三槽、中层 ``layout: vertical|horizontal``。"""
         assert self.res_dir is not None
-        image_bytes, ion_fmt, im_width, im_height = _read_raster_passthrough(
-            image_path
+        image_bytes, ion_fmt, im_width, im_height = _load_page_raster_for_kdf(
+            image_path,
+            rotate_landscape_90=rotate_landscape_90,
+            erase_colorsoft_rainbow=erase_colorsoft_rainbow,
         )
-        if rotate_landscape_90 and im_width > im_height:
-            image_bytes, im_width, im_height = _encode_rotated_raster(
-                image_bytes, ion_fmt
-            )
-            logger.debug(
-                "[kdf] 横幅旋转 90°（逆时针）: %s -> %dx%d",
-                image_path.name,
-                im_width,
-                im_height,
-            )
 
         axis_ion = (
             "vertical" if virtual_panel_axis == "vertical" else "horizontal"
@@ -678,21 +722,14 @@ class ImageKdfWriter:
         image_path: Path,
         *,
         rotate_landscape_90: bool = False,
+        erase_colorsoft_rainbow: bool = False,
     ) -> tuple[str, list[tuple[str, int]], str]:
         assert self.res_dir is not None
-        image_bytes, ion_fmt, im_width, im_height = _read_raster_passthrough(
-            image_path
+        image_bytes, ion_fmt, im_width, im_height = _load_page_raster_for_kdf(
+            image_path,
+            rotate_landscape_90=rotate_landscape_90,
+            erase_colorsoft_rainbow=erase_colorsoft_rainbow,
         )
-        if rotate_landscape_90 and im_width > im_height:
-            image_bytes, im_width, im_height = _encode_rotated_raster(
-                image_bytes, ion_fmt
-            )
-            logger.debug(
-                "[kdf] 横幅旋转 90°（逆时针）: %s -> %dx%d",
-                image_path.name,
-                im_width,
-                im_height,
-            )
 
         section_id = self.create_fragment_id("c")
         section_struct_id = self.create_fragment_id("i")
